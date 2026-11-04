@@ -3,8 +3,6 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
 from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
 import io
 
 # Page settings matching IMF presentation formatting guidelines
@@ -83,31 +81,28 @@ kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
 kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
 net_var = total_act - total_proj
-kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}" if net_var >= 0 else f"{net_var:,.2f}")
+kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}")
 kpi4.metric("Convergence Efficiency", f"{(total_act/total_proj*100):.2f}%")
 
-# 🇱🇨 ST. LUCIA HIGH-FIDELITY NATIONAL COLOR CHARTS
 st.subheader("📊 Strategic Presentation Graphics")
 df = pd.DataFrame(matrix_data)
 
-# Chart 1: Actual vs Budget
+# Chart 1: Actual vs Budget (Saint Lucia Cerulean Blue and Gold)
 fig1 = go.Figure()
-fig1.add_trace(go.Bar(x=df["Description"], y=df["Projected Target"], name="Budget Projection", marker_color="#FCD34D")) # St Lucia Gold
-fig1.add_trace(go.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Revenue", marker_color="#0284C7")) # St Lucia Sky Blue
+fig1.add_trace(go.Bar(x=df["Description"], y=df["Projected Target"], name="Budget Projection", marker_color="#FCD34D"))
+fig1.add_trace(go.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Revenue", marker_color="#0284C7"))
 fig1.update_layout(barmode="group", title="Comparative Target Convergence Evaluation by Revenue Account", margin=dict(t=40, b=40, l=40, r=40))
 st.plotly_chart(fig1, use_container_width=True)
 
 col_left, col_right = st.columns(2)
 
 with col_left:
-    # Chart 2: Variance Share
     df_neg = df[df["Net Variance"] != 0].copy()
     df_neg["Abs Variance"] = df_neg["Net Variance"].abs()
     fig2 = px.pie(df_neg, values="Abs Variance", names="Description", title="Proportional Variance Footprint Distribution Matrix", color_discrete_sequence=px.colors.sequential.Blues_r)
     st.plotly_chart(fig2, use_container_width=True)
 
 with col_right:
-    # Chart 3: Progression Path
     trend_data = []
     running_act, running_proj = 0, 0
     for idx, m in enumerate(FISCAL_MONTHS[:6]):
@@ -120,7 +115,6 @@ with col_right:
     fig3 = px.line(df_trend, x="Month", y="Value", color="Type", title="Fiscal Year Progression Path Tracking (April - September)", markers=True, color_discrete_map={"Cumulative Actual Inflows": "#0284C7", "Cumulative Target Projection": "#FCD34D"})
     st.plotly_chart(fig3, use_container_width=True)
 
-# Main Summary Matrix Grid
 st.subheader("📋 Detailed Inflow Summary Matrix")
 st.dataframe(df.style.format({
     "Projected Target": "${:,.2f}",
@@ -134,7 +128,10 @@ st.dataframe(df.style.format({
 # --------------------------------===================
 st.subheader("📝 Automated Variance Notes Briefing Generator")
 
-report_text = f"""SAINT LUCIA\nDEPARTMENT OF FINANCE\nINLAND REVENUE DEPARTMENT\n
+report_text = f"""SAINT LUCIA
+DEPARTMENT OF FINANCE
+INLAND REVENUE DEPARTMENT
+
 Revenue Collection Report — Scope: {scope}
 Evaluation Framework for the IMF Article IV Delegation Brief
 
@@ -158,19 +155,16 @@ for item in matrix_data:
     meta = TAX_META[code]
     v_fmt = f"(${abs(item['Net Variance']):,.2f})" if (item['Net Variance'] < 0) else f"${item['Net Variance']:,.2f}"
     
-    report_text += f"""
-{code} — {item['Description']}
-Projection: $ {item['Projected Target']:,.2f}
-Actual: $ {item['Actual Collected']:,.2f}
-Variance: {v_fmt} or {item['Convergence %']:.2f}%
-
-Analytical Assessment:
-Collections under this tax head window track functional seasonal parameters. {meta['ctx']} Performance lines show clear baseline convergence matching targeted tracking models for the historical fiscal period.
-"""
-doc.add_heading(f"{code} — {item['Description']}", level=3)
-doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
+    report_text += f"\n{code} — {item['Description']}\n"
+    report_text += f"Projection: $ {item['Projected Target']:,.2f}\n"
+    report_text += f"Actual: $ {item['Actual Collected']:,.2f}\n"
+    report_text += f"Variance: {v_fmt} or {item['Convergence %']:.2f}%\n\n"
+    report_text += f"Analytical Assessment:\nCollections under this tax head window track functional seasonal parameters. {meta['ctx']} Performance lines show clear baseline convergence matching targeted tracking models for the historical fiscal period.\n"
+    
+    doc.add_heading(f"{code} — {item['Description']}", level=3)
+    doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
 doc.add_paragraph(f"Analytical Evaluation: {meta['ctx']} Collections track normal seasonal distribution frameworks for the fiscal lifecycle.")
-if code == "3131 001":    
+if code == "3131 001":
 report_text += "📋 Operational Bound Note: Due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
 doc.add_paragraph("⚠️ Operational Bound Note: Residential property tax moratorium is active; billing applies exclusively to commercial segments.")
 elif code == "3142 006":
