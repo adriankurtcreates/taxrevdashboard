@@ -24,11 +24,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Canonical month names (Title Case for display)
 FISCAL_MONTHS = ["April", "May", "June", "July", "August", "September",
                  "October", "November", "December", "January", "February", "March"]
 
-# Comprehensive alias map — all UPPERCASE keys so lookup is case-insensitive
+# All keys UPPERCASE for case-insensitive lookup
 MONTH_ALIASES = {
     "APR": "April", "APRIL": "April",
     "MAY": "May",
@@ -44,25 +43,18 @@ MONTH_ALIASES = {
     "MAR": "March", "MARCH": "March",
 }
 
-def normalize_month(name):
+def find_month_in_text(text):
     """
-    Case-insensitive month normalizer. Accepts anything:
-    'SEPTEMBER', 'sept', 'September 2026', 'sep-2026', '   Sept   ', 'SEPTEMBER 2026'
-    → Always returns canonical Title-Case month ('September') or None.
+    Aggressively scan a string for ANY month alias.
+    Returns canonical Title-Case month or None.
+    Uses regex word boundaries so 'MAR' inside 'MARKET' does NOT match.
     """
-    if not name:
+    if not text:
         return None
-    # Extract only the first alphabetic word to strip years/dashes/numbers
-    match = re.search(r'[A-Za-z]+', str(name))
-    if not match:
-        return None
-    word = match.group(0).upper()
-    if word in MONTH_ALIASES:
-        return MONTH_ALIASES[word]
-    # Fallback: check if any alias is a prefix of this word (e.g. "sept2026")
-    for alias, canonical in MONTH_ALIASES.items():
-        if word.startswith(alias):
-            return canonical
+    text_upper = str(text).upper()
+    for alias in sorted(MONTH_ALIASES.keys(), key=len, reverse=True):
+        if re.search(r'\b' + alias + r'\b', text_upper):
+            return MONTH_ALIASES[alias]
     return None
 
 def safe_number(val):
@@ -80,34 +72,69 @@ def safe_number(val):
 def process_main_reports(file_payload):
     all_tax, all_office, diagnostics = [], [], []
     for filename, file_bytes in file_payload:
-        diag = {"file": filename, "status": "❌ Failed", "rows_parsed": 0, "month": None, "error": None}
+        diag = {
+            "file": filename, "status": "❌ Failed", "rows_parsed": 0,
+            "month": None, "detection_source": None, "error": None,
+            "sheets": None,
+        }
         try:
             file_obj = _io.BytesIO(file_bytes)
             xls = pd.ExcelFile(file_obj)
+            diag["sheets"] = ", ".join(xls.sheet_names)
 
-            # Case-insensitive sheet name search
+            # --- Find revenue sheet (case-insensitive) ---
             revenue_sheet = next(
                 (s for s in xls.sheet_names if "actual monthly revenue" in s.lower()), None
             )
             if not revenue_sheet:
-                # Fallback: any sheet containing "revenue" + "monthly"
                 revenue_sheet = next(
                     (s for s in xls.sheet_names
                      if "revenue" in s.lower() and "monthly" in s.lower()), None
                 )
             if not revenue_sheet:
                 diag["error"] = f"No revenue sheet found. Sheets: {xls.sheet_names}"
-                diagnostics.append(diag); continue
+                diagnostics.append(diag)
+                continue
 
-            # Case-insensitive month detection — try filename first, then sheet
-            month = normalize_month(filename)
+            # --- AGGRESSIVE MONTH DETECTION (5 strategies) ---
+            month = None
+
+            # Strategy 1: filename
+            month = find_month_in_text(filename)
+            if month:
+                diag["detection_source"] = "filename"
+
+            # Strategy 2: revenue sheet name
             if not month:
-                month = normalize_month(revenue_sheet)
+                month = find_month_in_text(revenue_sheet)
+                if month:
+                    diag["detection_source"] = f"sheet name ({revenue_sheet})"
+
+            # Strategy 3: any sheet name
             if not month:
-                diag["error"] = "Could not detect month from filename or sheet"
-                diagnostics.append(diag); continue
+                for s in xls.sheet_names:
+                    month = find_month_in_text(s)
+                    if month:
+                        diag["detection_source"] = f"other sheet ({s})"
+                        break
+
+            # Strategy 4: cell content in first 10 rows of revenue sheet
+            if not month:
+                df_probe = pd.read_excel(file_obj, sheet_name=revenue_sheet, header=None, nrows=10)
+                for val in df_probe.values.flatten():
+                    month = find_month_in_text(val)
+                    if month:
+                        diag["detection_source"] = f"cell content ('{val}')"
+                        break
+
+            if not month:
+                diag["error"] = "Could not detect month from filename, sheets, or cell content"
+                diagnostics.append(diag)
+                continue
+
             diag["month"] = month
 
+            # --- Parse revenue sheet ---
             df = pd.read_excel(file_obj, sheet_name=revenue_sheet, header=None)
             parsed = 0
             for i in range(5, min(35, len(df))):
@@ -133,7 +160,7 @@ def process_main_reports(file_payload):
                 parsed += 1
             diag["rows_parsed"] = parsed
 
-            # Case-insensitive daily collection sheet search
+            # --- Parse daily collection sheet ---
             daily_sheet = next(
                 (s for s in xls.sheet_names if "daily collection" in s.lower()), None
             )
@@ -154,6 +181,9 @@ def process_main_reports(file_payload):
 
             if parsed > 0:
                 diag["status"] = "✅ OK"
+            else:
+                diag["error"] = "Month detected but no tax rows parsed (check code format)"
+
         except Exception as e:
             diag["error"] = str(e)
         diagnostics.append(diag)
@@ -165,24 +195,51 @@ def process_main_reports(file_payload):
 def process_isic_reports(file_payload):
     all_isic, diagnostics = [], []
     for filename, file_bytes in file_payload:
-        diag = {"file": filename, "status": "❌ Failed", "rows_parsed": 0, "month": None, "error": None}
+        diag = {
+            "file": filename, "status": "❌ Failed", "rows_parsed": 0,
+            "month": None, "detection_source": None, "error": None,
+            "sheets": None,
+        }
         try:
             file_obj = _io.BytesIO(file_bytes)
             xls = pd.ExcelFile(file_obj)
+            diag["sheets"] = ", ".join(xls.sheet_names)
 
-            # Case-insensitive search for projected v actual
             proj_sheet = next(
                 (s for s in xls.sheet_names
                  if "projected" in s.lower() and "actual" in s.lower()), None
             )
             if not proj_sheet:
                 diag["error"] = f"No 'Projected v Actual' sheet. Sheets: {xls.sheet_names}"
-                diagnostics.append(diag); continue
+                diagnostics.append(diag)
+                continue
 
-            month = normalize_month(filename) or normalize_month(proj_sheet)
+            # Same 5-strategy detection
+            month = find_month_in_text(filename)
+            if month:
+                diag["detection_source"] = "filename"
+            if not month:
+                month = find_month_in_text(proj_sheet)
+                if month:
+                    diag["detection_source"] = f"sheet name ({proj_sheet})"
+            if not month:
+                for s in xls.sheet_names:
+                    month = find_month_in_text(s)
+                    if month:
+                        diag["detection_source"] = f"other sheet ({s})"
+                        break
+            if not month:
+                df_probe = pd.read_excel(file_obj, sheet_name=proj_sheet, header=None, nrows=10)
+                for val in df_probe.values.flatten():
+                    month = find_month_in_text(val)
+                    if month:
+                        diag["detection_source"] = f"cell content ('{val}')"
+                        break
+
             if not month:
                 diag["error"] = "Could not detect month"
-                diagnostics.append(diag); continue
+                diagnostics.append(diag)
+                continue
             diag["month"] = month
 
             df = pd.read_excel(file_obj, sheet_name=proj_sheet, header=None)
@@ -208,6 +265,7 @@ def process_isic_reports(file_payload):
             diag["rows_parsed"] = parsed
             if parsed > 0:
                 diag["status"] = "✅ OK"
+
         except Exception as e:
             diag["error"] = str(e)
         diagnostics.append(diag)
@@ -240,13 +298,78 @@ if main_files:
     main_payload = [(f.name, f.getvalue()) for f in main_files]
     df_main, df_daily, diag_main = process_main_reports(main_payload)
 
+    # --- DIAGNOSTICS with manual override ---
     with st.expander("🔍 Main Report Diagnostics", expanded=df_main.empty):
         st.dataframe(diag_main, use_container_width=True)
 
+        # Manual override for months that failed detection
+        failed = diag_main[diag_main["status"] == "❌ Failed"]
+        if not failed.empty:
+            st.warning("Some files could not have their month detected. "
+                       "Assign them manually below:")
+            override_map = {}
+            for _, row in failed.iterrows():
+                manual = st.selectbox(
+                    f"Month for: `{row['file']}`",
+                    ["(skip)"] + FISCAL_MONTHS,
+                    key=f"override_{row['file']}"
+                )
+                if manual != "(skip)":
+                    override_map[row['file']] = manual
+
+            if override_map and st.button("Apply Manual Overrides"):
+                # Re-process with manual overrides applied
+                # (We re-run parsing but override the month post-hoc)
+                new_payload = []
+                for f in main_files:
+                    new_payload.append((f.name, f.getvalue()))
+
+                # Simple approach: re-parse, then patch months
+                temp_tax, temp_office, temp_diag = process_main_reports.__wrapped__(new_payload)
+                for _, row in temp_diag.iterrows():
+                    if row['file'] in override_map:
+                        month = override_map[row['file']]
+                        # Re-parse that file with the known month
+                        for f in main_files:
+                            if f.name == row['file']:
+                                try:
+                                    file_obj = _io.BytesIO(f.getvalue())
+                                    xls = pd.ExcelFile(file_obj)
+                                    revenue_sheet = next(
+                                        (s for s in xls.sheet_names
+                                         if "actual monthly revenue" in s.lower()), None
+                                    )
+                                    if revenue_sheet:
+                                        df = pd.read_excel(file_obj, sheet_name=revenue_sheet, header=None)
+                                        for i in range(5, min(35, len(df))):
+                                            code = df.iloc[i, 0]
+                                            name = df.iloc[i, 1]
+                                            if pd.isna(code) or pd.isna(name):
+                                                continue
+                                            if "total" in str(name).lower():
+                                                continue
+                                            code_str = str(code).strip()
+                                            if not re.match(r'^\d{4}\s*\d{3}$', code_str):
+                                                continue
+                                            temp_tax = pd.concat([temp_tax, pd.DataFrame([{
+                                                "Month": month,
+                                                "Code": code_str,
+                                                "Account": str(name).strip(),
+                                                "Approved_Annual": safe_number(df.iloc[i, 2]),
+                                                "Monthly_Actual": safe_number(df.iloc[i, 9]),
+                                                "YTD_Actual": safe_number(df.iloc[i, 15]),
+                                                "YTD_Variance": safe_number(df.iloc[i, 16]),
+                                            }])], ignore_index=True)
+                                except Exception:
+                                    pass
+                st.session_state["manual_tax_data"] = temp_tax
+                st.rerun()
+
+        # If manual overrides were applied, use them
+        if "manual_tax_data" in st.session_state and not st.session_state["manual_tax_data"].empty:
+            df_main = st.session_state["manual_tax_data"]
+
     if not df_main.empty:
-        # Every month in df_main['Month'] is already canonical Title-Case.
-        # Every entry in selected_months is also canonical Title-Case.
-        # So this direct comparison is now safe — no manual casing needed.
         df_filtered = df_main[df_main['Month'].isin(selected_months)]
 
         if df_filtered.empty:
@@ -393,7 +516,6 @@ if isic_files:
         st.markdown("---")
         st.header("🏭 ISIC Sector Deep-Dive")
 
-        # Same canonical month comparison — no manual casing needed.
         df_isic_f = df_isic[df_isic['Month'].isin(selected_months)]
 
         if df_isic_f.empty:
