@@ -81,7 +81,7 @@ kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
 kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
 net_var = total_act - total_proj
-kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}")
+kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}" if net_var >= 0 else f"{net_var:,.2f}")
 kpi4.metric("Convergence Efficiency", f"{(total_act/total_proj*100):.2f}%")
 
 st.subheader("📊 Strategic Presentation Graphics")
@@ -128,71 +128,45 @@ st.dataframe(df.style.format({
 # --------------------------------===================
 st.subheader("📝 Automated Variance Notes Briefing Generator")
 
-report_text = f"""SAINT LUCIA
-DEPARTMENT OF FINANCE
-INLAND REVENUE DEPARTMENT
-
-Revenue Collection Report — Scope: {scope}
-Evaluation Framework for the IMF Article IV Delegation Brief
-
-OVERVIEW
-For the targeted timeline period tracking {scope}, the Inland Revenue Department projected gross aggregate receipts of $ {total_proj:,.2f}. Actual collections validation models calculated total realized volume at $ {total_act:,.2f}, indicating a net variation outturn of $ {net_var:,.2f} (representing a target convergence rate of {(total_act/total_proj*100):.2f}%). 
-
-Note: Data feeds remain provisional matching internal oversight standards. All figures remain subject to final matching reconciliations against collections logs from the Accountant General's Department.
-
-VARIANCE ANALYSIS BY TAX TYPE
---------------------------------------------------------------------------------
-"""
+report_text = f"SAINT LUCIA\nDEPARTMENT OF FINANCE\nINLAND REVENUE DEPARTMENT\n\nRevenue Collection Report — Scope: {scope}\nEvaluation Framework for the IMF Article IV Delegation Brief\n\nOVERVIEW\nFor the targeted timeline period tracking {scope}, the Inland Revenue Department projected gross aggregate receipts of $ {total_proj:,.2f}. Actual collections validation models calculated total realized volume at $ {total_act:,.2f}, indicating a net variation outturn of $ {net_var:,.2f}.\n\nVARIANCE ANALYSIS BY TAX TYPE\n"
 
 # Initialize clean word document template structure
 doc = Document()
 doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', level=1)
 doc.add_heading(f'Revenue Collection Brief — Scope: {scope}', level=2)
-doc.add_paragraph(f"For the evaluated interval scope tracking {scope}, the Inland Revenue Department projected aggregate receipts of $ {total_proj:,.2f}. Actual collections validation records totaled $ {total_act:,.2f}, resulting in a variance of $ {net_var:,.2f}.\n")
 
 for item in matrix_data:
     code = item["Code"]
     meta = TAX_META[code]
     v_fmt = f"(${abs(item['Net Variance']):,.2f})" if (item['Net Variance'] < 0) else f"${item['Net Variance']:,.2f}"
     
-    report_text += f"\n{code} — {item['Description']}\n"
-    report_text += f"Projection: $ {item['Projected Target']:,.2f}\n"
-    report_text += f"Actual: $ {item['Actual Collected']:,.2f}\n"
-    report_text += f"Variance: {v_fmt} or {item['Convergence %']:.2f}%\n\n"
-    report_text += f"Analytical Assessment:\nCollections under this tax head window track functional seasonal parameters. {meta['ctx']} Performance lines show clear baseline convergence matching targeted tracking models for the historical fiscal period.\n"
+    report_text += f"\n{code} — {item['Description']}\nProjection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)\n"
     
     doc.add_heading(f"{code} — {item['Description']}", level=3)
     doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
-doc.add_paragraph(f"Analytical Evaluation: {meta['ctx']} Collections track normal seasonal distribution frameworks for the fiscal lifecycle.")
-if code == "3131 001":
-report_text += "📋 Operational Bound Note: Due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
-doc.add_paragraph("⚠️ Operational Bound Note: Residential property tax moratorium is active; billing applies exclusively to commercial segments.")
-elif code == "3142 006":
-report_text += "📋 Operational Bound Note: The top-performing sectors listed for Stamp Duty may not be a true indicator of which economic sectors are actually generating the underlying transactions. This is because the ISIC code used to log the payment is routinely assigned to the law firm or legal practitioner paying the tax on behalf of their diverse corporate or individual clients.\n"
-doc.add_paragraph("⚠️ Operational Bound Note: Mapped ISIC tags follow transacting legal intermediaries rather than the funding asset classes directly.")
-elif code == "3141 004":
-report_text += "📋 Operational Bound Note: Do not label this tax as obsolete. HAT remains an active registry line for the collection and settlement of legacy arrears, which accounts for ongoing revenue despite no active monthly projections.\n"
-doc.add_paragraph("⚠️ Operational Bound Note: Line tracks active legal collections on historical legacy arrears accounts.")
+    
+    if code == "3131 001":
+        note = "Moratorium Notice: Note that due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
+        report_text += note
+        doc.add_paragraph(note)
+    elif code == "3142 006":
+        note = "Stamp Duty Disclaimer: The top-performing sectors listed for Stamp Duty may not be a true indicator of which economic sectors are actually generating the underlying transactions.\n"
+        report_text += note
+        doc.add_paragraph(note)
+    elif code == "3141 004":
+        note = "Legacy Notification: Do not label this tax as obsolete. HAT remains an active registry line for legacy arrears.\n"
+        report_text += note
+        doc.add_paragraph(note)
 elif code == "3422 008":
-report_text += "📋 Operational Bound Note: Due to the active Amnesty extending to December 2027, collections are minimal and result primarily from the waiver of interest, penalties, and fees.\n"
-doc.add_paragraph("⚠️ Operational Bound Note: Minimal volume reflects active waivers under the ongoing statutory Revenue Amnesty framework.")
-elif code == "3141 001":
-report_text += "Historical Trend Analysis (VAT September Base):\n  - September 2024: $ 12,020,500.00\n  - September 2025: $ 11,563,108.43\n  - September 2026: $ 18,328,871.14\nVAT collections in September have exhibited clear resilience with a significant structural expansion over the three-year period. Further observation will be required to confirm this trend.\n"
-doc.add_paragraph("Historical Trend Baseline (September VAT): 2024: $12.02M | 2025: $11.56M | 2026: $18.33M. Demonstrates long-term transaction registry health.")
-elif code == "3141 006":
-report_text += "Historical Trend Analysis (HCSL September Base):\n  - September 2024: $ 1,998,120.00\n  - September 2025: $ 2,273,600.00\n  - September 2026: $ 1,385,801.94\nHCSL collections in September reflect changing transaction trends. No historical trend data exists prior to its implementation in March 2023. Further observation of this activity will have to be noted.\n"
-doc.add_paragraph("Historical Trend Baseline (September HCSL): 2024: $2.00M | 2025: $2.27M | 2026: $1.39M. No records exist prior to initial launch in March 2023.")
-report_text += "--------------------------------------------------------------------------------\n"
+note = "Amnesty Framework: Due to the active Amnesty extending to December 2027, collections are minimal.\n"
+report_text += note
+doc.add_paragraph(note)
 st.text_area("Live Document Transcript Preview", report_text, height=300)
-
-Stream Word document directly as byte download block
-
 bio = io.BytesIO()
 doc.save(bio)
 bio.seek(0)
 st.download_button(
 label="📥 Download Formal Microsoft Word Brief (.docx)",
 data=bio.getvalue(),
-file_name=f"Saint_Lucia_IRD_IMF_Variance_Brief_{scope.replace(' ', '_')}.docx",
+file_name=f"Saint_Lucia_IRD_Variance_Brief_{scope.replace(' ', '_')}.docx",
 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
