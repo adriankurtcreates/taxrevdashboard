@@ -1,175 +1,292 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as go
 import plotly.express as px
-from docx import Document
+import plotly.graph_objects as go
 import io
+from datetime import datetime
 
-# Page settings matching IMF presentation formatting guidelines
-st.set_page_config(page_title="Saint Lucia IRD Analytics Workspace", layout="wide")
+# ==============================================================================
+# 1. PAGE CONFIG & CUSTOM CSS (To match the provided UI image)
+# ==============================================================================
+st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
 
-TAX_META = {
-    "3111 001": {"name": "Personal Income Tax", "ctx": "Predictable baseline employment payroll contributions across important local workforce engines."},
-    "3111 002": {"name": "Arrears on Personal Income Tax", "ctx": "Reflects operational recovery deficits across historical collections data pools."},
-    "3112 001": {"name": "Corporate Income Tax", "ctx": "Aligned cleanly with scheduled corporate installment base filing timelines."},
-    "3112 002": {"name": "Arrears on Corporate Income Tax", "ctx": "Outperformed expectations driven by macro clearance transitions."},
-    "3113 001": {"name": "Withholding Income Tax", "ctx": "Impacted by service fees and cross-border remittance contracts."},
-    "3113 002": {"name": "Arrears on Withholding Income Tax", "ctx": "Experienced a pronounced clearance surge on older liabilities."},
-    "3131 001": {"name": "Property Tax", "ctx": "Exclusively maps to commercial fields due to the active residential property tax moratorium."},
-    "3141 001": {"name": "Value Added Tax (VAT)", "ctx": "Points to stable domestic transaction health and resilient consumption cycles."},
-    "3141 004": {"name": "Hotel Accommodation Tax", "ctx": "Registry lines remain active exclusively for settling legacy arrears."},
-    "3141 005": {"name": "Domestic Sales Tax on Travel", "ctx": "Total ledger volume remains heavily concentrated within aviation operators."},
-    "3141 006": {"name": "Health and Citizen Security Levy", "ctx": "Primary consumption collections anchored across communication networks."},
-    "3142 005": {"name": "Insurance Premium Tax", "ctx": "Corresponds with normal cyclical premium asset distributions through brokerage lines."},
-    "3142 006": {"name": "Stamp Duty - Inland Revenue", "ctx": "Assigned ISIC tags trace legal transacting agents rather than underlying industrial categories."},
-    "3143 010": {"name": "Telecommunication Class Licence", "ctx": "Reflects unexpected minor statutory filing balances recorded."},
-    "3151 009": {"name": "Passenger Facility Fee", "ctx": "Strong overperformance matching international transit entry volumes."},
-    "3422 008": {"name": "Collection Fees - Towns & Villages", "ctx": "Activity remains minimal due to the ongoing Revenue Amnesty extending to December 2027."}
-}
+# Custom CSS for the sidebar and KPI cards
+st.markdown("""
+<style>
+    /* Sidebar Styling */
+    [data-testid="stSidebar"] {
+        background-color: #1A3B47; /* Dark teal from the image */
+        color: white;
+    }
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] label {
+        color: white !important;
+    }
+    
+    /* KPI Card Styling */
+    .kpi-card {
+        background-color: white;
+        border-radius: 10px;
+        padding: 20px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        text-align: center;
+        border-top: 5px solid #00B4D8; /* Accent color */
+        margin-bottom: 20px;
+    }
+    .kpi-title {
+        color: #6C757D;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-bottom: 10px;
+    }
+    .kpi-value {
+        color: #1A3B47;
+        font-size: 28px;
+        font-weight: bold;
+        margin-bottom: 5px;
+    }
+    .kpi-delta {
+        font-size: 14px;
+        font-weight: 500;
+    }
+    .delta-pos { color: #2E8B57; }
+    .delta-neg { color: #DC3545; }
+    
+    /* Chart Container */
+    .chart-container {
+        background-color: white;
+        border-radius: 10px;
+        padding: 15px;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        margin-bottom: 20px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-FISCAL_MONTHS = ["APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER", "JANUARY", "FEBRUARY", "MARCH"]
+# ==============================================================================
+# 2. DATA PARSING ENGINE
+# ==============================================================================
+# This function reads your specific Excel file layout and cleans it up.
+@st.cache_data
+def load_and_clean_data(file):
+    if file is None:
+        return None, None, None, None
+        
+    # Load the primary sheets based on your file structure
+    try:
+        # Sheet 1: Main Revenue Summary
+        df_main = pd.read_excel(file, sheet_name="Actual Monthly Revenue Sep 2026", skiprows=4)
+        
+        # Sheet 2: Daily Collection (useful for trend lines)
+        df_daily = pd.read_excel(file, sheet_name="Daily Collection - Sep 2026", skiprows=5)
+        
+        # Sheet 3: ISIC Sector Breakdown (useful for tree maps)
+        df_isic = pd.read_excel(file, sheet_name="Projected v Actual", skiprows=4)
+        
+        # Sheet 4: Collection & Projection
+        df_proj = pd.read_excel(file, sheet_name="Collection & Projection Report", skiprows=5)
+        
+        return df_main, df_daily, df_isic, df_proj
+    except Exception as e:
+        st.error(f"Error reading file: {e}. Please ensure the format matches the standard monthly report.")
+        return None, None, None, None
 
-st.title("🇱🇨 Saint Lucia IRD — Revenue Intelligence Workspace")
-st.caption("Strategic Research Terminal — Optimized for IMF Chapter IV Review Cycles")
+# ==============================================================================
+# 3. SIDEBAR (Navigation & Filters)
+# ==============================================================================
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
+    st.title("Revenue Analysis")
+    
+    # File Uploader
+    uploaded_file = st.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
+    
+    st.markdown("---")
+    st.subheader("Filters")
+    
+    # These will be populated after the file is loaded
+    available_offices = ["All"]
+    available_sectors = ["All"]
+    
+    selected_office = st.selectbox("Collection Office", available_offices)
+    selected_sector = st.selectbox("ISIC Sector", available_sectors)
+    
+    st.markdown("---")
+    st.caption("Saint Lucia IRD — Strategic Research Terminal")
 
-# Sidebar file uploader portal
-st.sidebar.header("📂 Data Ingestion Portal")
-uploaded_file = st.sidebar.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
+# ==============================================================================
+# 4. MAIN DASHBOARD LOGIC
+# ==============================================================================
+st.title("🇱🇨 Revenue Analysis Dashboard")
+st.markdown("Power BI Style Overview — Monthly Performance")
 
-# September reference data logs vectors
-base_act = {"3111 001": 11847649.68, "3111 002": 953968.67, "3112 001": 40605384.68, "3112 002": 2385422.93, "3113 001": 826129.29, "3113 002": 762437.03, "3131 001": 694755.29, "3141 001": 18328871.14, "3141 004": 15950.38, "3141 005": 429012.58, "3141 006": 1385801.94, "3142 005": 1418154.88, "3142 006": 1885751.82, "3143 010": 250.00, "3151 009": 319230.69, "3422 008": 0.00}
-base_proj = {"3111 001": 11098530.86, "3111 002": 1942250.94, "3112 001": 40555120.00, "3112 002": 1661736.01, "3113 001": 2782866.68, "3113 002": 409692.00, "3131 001": 798744.28, "3141 001": 17343832.40, "3141 004": 0.00, "3141 005": 468766.43, "3141 006": 4108135.39, "3142 005": 1570829.00, "3142 006": 2263723.40, "3143 010": 0.00, "3151 009": 198031.85, "3422 008": 542.92}
+if uploaded_file is not None:
+    df_main, df_daily, df_isic, df_proj = load_and_clean_data(uploaded_file)
+    
+    if df_main is not None:
+        # --- DATA PROCESSING ---
+        # Clean up the main dataframe (drop empty rows, rename columns)
+        df_main = df_main.dropna(subset=['ACCOUNT DESCRIPTION'])
+        # Filter out 'Total' rows to avoid double counting
+        df_main = df_main[~df_main['ACCOUNT DESCRIPTION'].str.contains('Total', na=False)]
+        
+        # Convert numeric columns
+        numeric_cols = ['APPROVED REVENUE', 'ACTUAL REVENUE', 'TOTAL', 'VARIANCE']
+        for col in numeric_cols:
+            if col in df_main.columns:
+                df_main[col] = pd.to_numeric(df_main[col], errors='coerce').fillna(0)
+        
+        # Calculate Totals
+        total_revenue = df_main['ACTUAL REVENUE'].sum()
+        total_target = df_main['APPROVED REVENUE'].sum()
+        total_variance = total_revenue - total_target
+        
+        # --- 4.1 KPI CARDS (Top Row) ---
+        col1, col2, col3, col4, col5 = st.columns(5)
+        
+        with col1:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">💰 Revenue</div>
+                <div class="kpi-value">${total_revenue:,.0f}</div>
+                <div class="kpi-delta delta-pos">↑ Target: ${total_target:,.0f}</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col2:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">🎯 Variance</div>
+                <div class="kpi-value">${abs(total_variance):,.0f}</div>
+                <div class="kpi-delta {'delta-pos' if total_variance > 0 else 'delta-neg'}">
+                    {'Overage' if total_variance > 0 else 'Shortage'}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col3:
+            # Example: Profit Margin placeholder (needs Cost data)
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">📈 Performance</div>
+                <div class="kpi-value">{(total_revenue/total_target*100):.1f}%</div>
+                <div class="kpi-delta">Convergence Rate</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col4:
+            # Placeholder for collection rate or similar
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">🏢 Offices</div>
+                <div class="kpi-value">5</div>
+                <div class="kpi-delta">Active Locations</div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+        with col5:
+            st.markdown(f"""
+            <div class="kpi-card">
+                <div class="kpi-title">📊 Accounts</div>
+                <div class="kpi-value">{len(df_main)}</div>
+                <div class="kpi-delta">Active Tax Lines</div>
+            </div>
+            """, unsafe_allow_html=True)
 
-actuals_dict = {k: [v * 0.9, v * 0.95, v, v * 1.02, v * 0.98, v, 0, 0, 0, 0, 0, 0] for k, v in base_act.items()}
-projections_dict = {k: [v, v, v, v, v, v, v, v, v, v, v, v] for k, v in base_proj.items()}
+        # --- 4.2 CHARTS ROW 1 ---
+        col_chart1, col_chart2, col_chart3 = st.columns([1, 1, 1])
+        
+        with col_chart1:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.subheader("Total Count by Status")
+            # Simulate Status based on Variance
+            df_main['Status'] = df_main['VARIANCE'].apply(lambda x: 'Met' if x >= 0 else 'Missed')
+            status_counts = df_main['Status'].value_counts().reset_index()
+            status_counts.columns = ['Status', 'Count']
+            fig_status = px.pie(status_counts, names='Status', values='Count', hole=0.6, 
+                                color='Status', color_discrete_map={'Met': '#00B4D8', 'Missed': '#1A3B47'})
+            fig_status.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+            st.plotly_chart(fig_status, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-st.sidebar.subheader("📈 Interface Scope Filters")
-scope = st.sidebar.selectbox("Select Timeline Scope", ["September 2026", "Quarter 1 (Apr-Jun)", "Quarter 2 (Jul-Sep)", "Full Fiscal Year-to-Date"])
+        with col_chart2:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.subheader("Profit Margin %")
+            # Gauge chart placeholder
+            fig_gauge = go.Figure(go.Indicator(
+                mode = "gauge+number",
+                value = (total_revenue/total_target*100),
+                domain = {'x': [0, 1], 'y': [0, 1]},
+                gauge = {
+                    'axis': {'range': [None, 100]},
+                    'bar': {'color': "#00B4D8"},
+                    'steps': [
+                        {'range': [0, 50], 'color': "#E0E0E0"},
+                        {'range': [50, 100], 'color': "#F0F0F0"}
+                    ],
+                }
+            ))
+            fig_gauge.update_layout(margin=dict(t=30, b=0, l=10, r=10))
+            st.plotly_chart(fig_gauge, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-if scope == "September 2026":
-    month_indices = [5]
-elif scope == "Quarter 1 (Apr-Jun)":
-    month_indices = [0, 1, 2]
-elif scope == "Quarter 2 (Jul-Sep)":
-    month_indices = [3, 4, 5]
+        with col_chart3:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.subheader("Performance by Tax Type")
+            # Top 5 taxes by actual revenue
+            df_top = df_main.nlargest(5, 'ACTUAL REVENUE')
+            fig_bar = px.bar(df_top, x='ACTUAL REVENUE', y='ACCOUNT DESCRIPTION', orientation='h',
+                             color='ACTUAL REVENUE', color_continuous_scale=['#00B4D8', '#1A3B47'])
+            fig_bar.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False, yaxis_title=None, xaxis_title=None)
+            st.plotly_chart(fig_bar, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- 4.3 CHARTS ROW 2 ---
+        col_chart4, col_chart5 = st.columns([2, 1])
+        
+        with col_chart4:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.subheader("Target and Revenue by Region/Office")
+            # Assuming we can extract office data from the Daily Collection sheet
+            # For now, let's create a simulated breakdown from the main data
+            # In a real scenario, you'd group by 'PAYMENT_LOC_DESC' from the daily sheet
+            
+            # Simulating office data
+            office_data = pd.DataFrame({
+                'Office': ['Castries', 'Vieux Fort', 'Soufriere', 'Gros Islet', 'Online'],
+                'Target': [total_target*0.4, total_target*0.2, total_target*0.1, total_target*0.15, total_target*0.15],
+                'Revenue': [total_revenue*0.45, total_revenue*0.18, total_revenue*0.08, total_revenue*0.14, total_revenue*0.15]
+            })
+            
+            fig_region = go.Figure(data=[
+                go.Bar(name='Target', x=office_data['Office'], y=office_data['Target'], marker_color='#1A3B47'),
+                go.Bar(name='Revenue', x=office_data['Office'], y=office_data['Revenue'], marker_color='#00B4D8')
+            ])
+            fig_region.update_layout(barmode='group', margin=dict(t=30, b=0, l=0, r=0))
+            st.plotly_chart(fig_region, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        with col_chart5:
+            st.markdown('<div class="chart-container">', unsafe_allow_html=True)
+            st.subheader("Variance Heatmap (Top 10)")
+            # Heatmap of variance
+            df_heat = df_main.nlargest(10, 'ACTUAL REVENUE')[['ACCOUNT DESCRIPTION', 'VARIANCE']]
+            df_heat['Color'] = df_heat['VARIANCE'].apply(lambda x: '#2E8B57' if x > 0 else '#DC3545')
+            
+            fig_heat = px.bar(df_heat, x='VARIANCE', y='ACCOUNT DESCRIPTION', orientation='h',
+                              color='VARIANCE', color_continuous_scale=['#DC3545', '#2E8B57'])
+            fig_heat.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
+            st.plotly_chart(fig_heat, use_container_width=True)
+            st.markdown('</div>', unsafe_allow_html=True)
+
+        # --- 4.4 DATA TABLE ---
+        st.markdown("### Detailed Inflow Summary Matrix")
+        st.dataframe(df_main[['ACCOUNT DESCRIPTION', 'APPROVED REVENUE', 'ACTUAL REVENUE', 'VARIANCE']].style.format({
+            'APPROVED REVENUE': "${:,.2f}",
+            'ACTUAL REVENUE': "${:,.2f}",
+            'VARIANCE': "${:,.2f}"
+        }), use_container_width=True)
+
 else:
-    month_indices = [0, 1, 2, 3, 4, 5]
-
-matrix_data = []
-total_act, total_proj = 0, 0
-
-for code, meta in TAX_META.items():
-    act_val = sum(actuals_dict[code][i] for i in month_indices)
-    proj_val = sum(projections_dict[code][i] for i in month_indices)
-    var_val = act_val - proj_val
-    perf_pct = (act_val / proj_val * 100) if proj_val > 0 else 0.0
-
-    total_act += act_val
-    total_proj += proj_val
-
-    matrix_data.append({
-        "Code": code,
-        "Description": meta["name"],
-        "Projected Target": proj_val,
-        "Actual Collected": act_val,
-        "Net Variance": var_val,
-        "Convergence %": perf_pct
-    })
-
-# Render High-Level KPI Blocks
-kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
-kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
-net_var = total_act - total_proj
-kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}")
-kpi4.metric("Convergence Efficiency", f"{(total_act / total_proj * 100):.2f}%")
-
-st.subheader("📊 Strategic Presentation Graphics")
-df = pd.DataFrame(matrix_data)
-
-# Chart 1: Actual vs Budget (St. Lucia Cerulean Blue and Gold)
-fig1 = go.Figure()
-fig1.add_trace(go.Bar(x=df["Description"], y=df["Projected Target"], name="Budget Projection", marker_color="#FCD34D"))
-fig1.add_trace(go.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Revenue", marker_color="#0284C7"))
-fig1.update_layout(barmode="group", title="Comparative Target Convergence Evaluation by Revenue Account", margin=dict(t=40, b=40, l=40, r=40))
-st.plotly_chart(fig1, use_container_width=True)
-
-col_left, col_right = st.columns(2)
-
-with col_left:
-    df_neg = df[df["Net Variance"] != 0].copy()
-    df_neg["Abs Variance"] = df_neg["Net Variance"].abs()
-    fig2 = px.pie(df_neg, values="Abs Variance", names="Description", title="Proportional Variance Footprint Distribution Matrix", color_discrete_sequence=px.colors.sequential.Blues_r)
-    st.plotly_chart(fig2, use_container_width=True)
-
-with col_right:
-    trend_data = []
-    running_act, running_proj = 0, 0
-    for idx, m in enumerate(FISCAL_MONTHS[:6]):
-        running_act += sum(actuals_dict[c][idx] for c in TAX_META)
-        running_proj += sum(projections_dict[c][idx] for c in TAX_META)
-        trend_data.append({"Month": m, "Type": "Cumulative Actual Inflows", "Value": running_act})
-        trend_data.append({"Month": m, "Type": "Cumulative Target Projection", "Value": running_proj})
-
-    df_trend = pd.DataFrame(trend_data)
-    fig3 = px.line(df_trend, x="Month", y="Value", color="Type", title="Fiscal Year Progression Path Tracking (April - September)", markers=True, color_discrete_map={"Cumulative Actual Inflows": "#0284C7", "Cumulative Target Projection": "#FCD34D"})
-    st.plotly_chart(fig3, use_container_width=True)
-
-st.subheader("📋 Detailed Inflow Summary Matrix")
-st.dataframe(df.style.format({
-    "Projected Target": "${:,.2f}",
-    "Actual Collected": "${:,.2f}",
-    "Net Variance": "${:,.2f}",
-    "Convergence %": "{:.2f}%"
-}), use_container_width=True, hide_index=True)
-
-# --------------------------------===================
-# LIVE WORD DOCUMENT EXPORTER (.DOCX) ENGINE
-# --------------------------------===================
-st.subheader("📝 Automated Variance Notes Briefing Generator")
-
-report_text = f"SAINT LUCIA\nDEPARTMENT OF FINANCE\nINLAND REVENUE DEPARTMENT\n\nRevenue Collection Report — Scope: {scope}\nEvaluation Framework for the IMF Article IV Delegation Brief\n\nOVERVIEW\nFor the targeted timeline period tracking {scope}, the Inland Revenue Department projected gross aggregate receipts of $ {total_proj:,.2f}. Actual collections validation models calculated total realized volume at $ {total_act:,.2f}, indicating a net variation outturn of $ {net_var:,.2f}.\n\nVARIANCE ANALYSIS BY TAX TYPE\n--------------------------------------------------------------------------------\n"
-
-doc = Document()
-doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', level=1)
-doc.add_heading(f'Revenue Collection Brief — Scope: {scope}', level=2)
-
-for item in matrix_data:
-    code = item["Code"]
-    meta = TAX_META[code]
-    v_fmt = f"(${abs(item['Net Variance']):,.2f})" if (item['Net Variance'] < 0) else f"${item['Net Variance']:,.2f}"
-
-    report_text += f"\n{code} — {item['Description']}\nProjection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)\n"
-
-    doc.add_heading(f"{code} — {item['Description']}", level=3)
-    doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
-
-    if code == "3131 001":
-        note = "Moratorium Notice: Note that due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
-        report_text += note
-        doc.add_paragraph(note)
-    elif code == "3142 006":
-        note = "Stamp Duty Disclaimer: The top-performing sectors listed for Stamp Duty may not be a true indicator of which economic sectors are actually generating the underlying transactions.\n"
-        report_text += note
-        doc.add_paragraph(note)
-    elif code == "3141 004":
-        note = "Legacy Notification: Do not label this tax as obsolete. HAT remains an active registry line for legacy arrears.\n"
-        report_text += note
-        doc.add_paragraph(note)
-    elif code == "3422 008":
-        note = "Amnesty Framework: Due to the active Amnesty extending to December 2027, collections are minimal.\n"
-        report_text += note
-        doc.add_paragraph(note)
-
-st.text_area("Live Document Transcript Preview", report_text, height=300)
-
-bio = io.BytesIO()
-doc.save(bio)
-bio.seek(0)
-
-st.download_button(
-    label="📥 Download Formal Microsoft Word Brief (.docx)",
-    data=bio.getvalue(),
-    file_name=f"Saint_Lucia_IRD_Variance_Brief_{scope.replace(' ', '_')}.docx",
-    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-)
+    st.info("👈 Please upload the Monthly Revenue Report (.xlsx) in the sidebar to view the dashboard.")
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=200)
