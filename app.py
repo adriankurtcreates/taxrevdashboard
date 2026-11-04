@@ -170,7 +170,7 @@ Collections under this tax head window track functional seasonal parameters. {me
 doc.add_heading(f"{code} — {item['Description']}", level=3)
 doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
 doc.add_paragraph(f"Analytical Evaluation: {meta['ctx']} Collections track normal seasonal distribution frameworks for the fiscal lifecycle.")
-elif code == "3131 001":
+if     code == "3131 001":
 report_text += "📋 Operational Bound Note: Due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
 doc.add_paragraph("⚠️ Operational Bound Note: Residential property tax moratorium is active; billing applies exclusively to commercial segments.")
 elif code == "3142 006":
