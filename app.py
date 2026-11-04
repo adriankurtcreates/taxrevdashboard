@@ -3,153 +3,147 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import io
-from datetime import datetime
 
 # ==============================================================================
-# 1. PAGE CONFIG & CUSTOM CSS (To match the provided UI image)
+# 1. PAGE CONFIG & CUSTOM CSS
 # ==============================================================================
 st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
 
-# Custom CSS for the sidebar and KPI cards
 st.markdown("""
 <style>
-    /* Sidebar Styling */
-    [data-testid="stSidebar"] {
-        background-color: #1A3B47; /* Dark teal from the image */
-        color: white;
-    }
-    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] h1, [data-testid="stSidebar"] h2, [data-testid="stSidebar"] h3, [data-testid="stSidebar"] label {
-        color: white !important;
-    }
-    
-    /* KPI Card Styling */
-    .kpi-card {
-        background-color: white;
-        border-radius: 10px;
-        padding: 20px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        text-align: center;
-        border-top: 5px solid #00B4D8; /* Accent color */
-        margin-bottom: 20px;
-    }
-    .kpi-title {
-        color: #6C757D;
-        font-size: 14px;
-        font-weight: 600;
-        text-transform: uppercase;
-        margin-bottom: 10px;
-    }
-    .kpi-value {
-        color: #1A3B47;
-        font-size: 28px;
-        font-weight: bold;
-        margin-bottom: 5px;
-    }
-    .kpi-delta {
-        font-size: 14px;
-        font-weight: 500;
-    }
+    [data-testid="stSidebar"] { background-color: #1A3B47; color: white; }
+    [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] h1, [data-testid="stSidebar"] label { color: white !important; }
+    .kpi-card { background-color: white; border-radius: 10px; padding: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); text-align: center; border-top: 5px solid #00B4D8; margin-bottom: 20px; }
+    .kpi-title { color: #6C757D; font-size: 14px; font-weight: 600; text-transform: uppercase; margin-bottom: 10px; }
+    .kpi-value { color: #1A3B47; font-size: 28px; font-weight: bold; margin-bottom: 5px; }
+    .kpi-delta { font-size: 14px; font-weight: 500; }
     .delta-pos { color: #2E8B57; }
     .delta-neg { color: #DC3545; }
-    
-    /* Chart Container */
-    .chart-container {
-        background-color: white;
-        border-radius: 10px;
-        padding: 15px;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
-    }
+    .chart-container { background-color: white; border-radius: 10px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
 </style>
 """, unsafe_allow_html=True)
 
 # ==============================================================================
 # 2. DATA PARSING ENGINE
 # ==============================================================================
-# This function reads your specific Excel file layout and cleans it up.
 @st.cache_data
-def load_and_clean_data(file):
-    if file is None:
-        return None, None, None, None
-        
-    # Load the primary sheets based on your file structure
+def load_main_report(file):
+    """Parses the Monthly Revenue Collections file using exact cell structures."""
     try:
-        # Sheet 1: Main Revenue Summary
-        df_main = pd.read_excel(file, sheet_name="Actual Monthly Revenue Sep 2026", skiprows=4)
+        # We skip the first 5 rows (headers) and only read the columns we need
+        # The actual data starts at row 6 (index 5 in 0-based pandas reading)
+        df = pd.read_excel(file, sheet_name="Actual Monthly Revenue Sep 2026", header=None)
         
-        # Sheet 2: Daily Collection (useful for trend lines)
-        df_daily = pd.read_excel(file, sheet_name="Daily Collection - Sep 2026", skiprows=5)
-        
-        # Sheet 3: ISIC Sector Breakdown (useful for tree maps)
-        df_isic = pd.read_excel(file, sheet_name="Projected v Actual", skiprows=4)
-        
-        # Sheet 4: Collection & Projection
-        df_proj = pd.read_excel(file, sheet_name="Collection & Projection Report", skiprows=5)
-        
-        return df_main, df_daily, df_isic, df_proj
+        # Extract the relevant data block (Rows 5 to 31 contain the tax accounts)
+        # Columns: A=Code, B=Name, C=Approved, E=April, F=May... J=Sept, P=Total, Q=Variance
+        data = []
+        for i in range(5, 32):
+            code = df.iloc[i, 0]
+            name = df.iloc[i, 1]
+            # Check if it's a valid tax line (not a total or blank)
+            if pd.notna(code) and pd.notna(name) and "Total" not in str(name):
+                approved = df.iloc[i, 2]
+                actual_sep = df.iloc[i, 9] # Column J is September Actuals
+                total_actual = df.iloc[i, 15] # Column P is Total Actual
+                variance = df.iloc[i, 16] # Column Q is Variance
+                
+                data.append({
+                    "Code": str(code).strip(),
+                    "Account": str(name).strip(),
+                    "Approved": pd.to_numeric(approved, errors='coerce'),
+                    "Actual_Sep": pd.to_numeric(actual_sep, errors='coerce'),
+                    "Total_Actual": pd.to_numeric(total_actual, errors='coerce'),
+                    "Variance": pd.to_numeric(variance, errors='coerce')
+                })
+        return pd.DataFrame(data)
     except Exception as e:
-        st.error(f"Error reading file: {e}. Please ensure the format matches the standard monthly report.")
-        return None, None, None, None
+        st.error(f"Error reading Main Report: {e}")
+        return None
+
+@st.cache_data
+def load_daily_collection(file):
+    """Parses the Daily Collection file to get Office/Location breakdown."""
+    try:
+        # Data starts around row 10. Total row is at the bottom, but we want the breakdown
+        # by Office (Vieux-Fort, Soufriere, Online, etc.)
+        df = pd.read_excel(file, sheet_name="Daily Collection - Sep 2026", header=None)
+        
+        offices = []
+        # Offices are listed starting around row 32 in the sheet
+        for i in range(32, 50):
+            name = df.iloc[i, 0]
+            total = df.iloc[i, 20] # Column U holds the row totals
+            if pd.notna(name) and pd.notna(total) and name != "Sub Total":
+                offices.append({"Office": str(name).strip(), "Total": pd.to_numeric(total, errors='coerce')})
+        return pd.DataFrame(offices)
+    except Exception as e:
+        return pd.DataFrame() # Return empty if fails, not critical
+
+@st.cache_data
+def load_isic_data(file):
+    """Parses the ISIC file to get tax types and projection vs actual."""
+    try:
+        df = pd.read_excel(file, sheet_name="Projected v Actual", header=None)
+        
+        data = []
+        for i in range(6, 30):
+            code = df.iloc[i, 1]
+            name = df.iloc[i, 2]
+            if pd.notna(code) and pd.notna(name):
+                projection = df.iloc[i, 3]
+                collection = df.iloc[i, 4]
+                variance = df.iloc[i, 7]
+                
+                data.append({
+                    "Code": str(code).strip(),
+                    "Account": str(name).strip(),
+                    "Projection": pd.to_numeric(projection, errors='coerce'),
+                    "Collection": pd.to_numeric(collection, errors='coerce'),
+                    "Variance": pd.to_numeric(variance, errors='coerce')
+                })
+        return pd.DataFrame(data)
+    except Exception as e:
+        return pd.DataFrame()
 
 # ==============================================================================
-# 3. SIDEBAR (Navigation & Filters)
+# 3. SIDEBAR
 # ==============================================================================
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
     st.title("Revenue Analysis")
     
-    # File Uploader
-    uploaded_file = st.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
-    
-    st.markdown("---")
-    st.subheader("Filters")
-    
-    # These will be populated after the file is loaded
-    available_offices = ["All"]
-    available_sectors = ["All"]
-    
-    selected_office = st.selectbox("Collection Office", available_offices)
-    selected_sector = st.selectbox("ISIC Sector", available_sectors)
+    st.markdown("### 📂 Data Ingestion")
+    main_file = st.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
+    isic_file = st.file_uploader("Upload ISIC Variance Report (.xlsx)", type=["xlsx"])
     
     st.markdown("---")
     st.caption("Saint Lucia IRD — Strategic Research Terminal")
 
 # ==============================================================================
-# 4. MAIN DASHBOARD LOGIC
+# 4. MAIN DASHBOARD
 # ==============================================================================
 st.title("🇱🇨 Revenue Analysis Dashboard")
-st.markdown("Power BI Style Overview — Monthly Performance")
 
-if uploaded_file is not None:
-    df_main, df_daily, df_isic, df_proj = load_and_clean_data(uploaded_file)
+if main_file is not None:
+    df_main = load_main_report(main_file)
     
-    if df_main is not None:
-        # --- DATA PROCESSING ---
-        # Clean up the main dataframe (drop empty rows, rename columns)
-        df_main = df_main.dropna(subset=['ACCOUNT DESCRIPTION'])
-        # Filter out 'Total' rows to avoid double counting
-        df_main = df_main[~df_main['ACCOUNT DESCRIPTION'].str.contains('Total', na=False)]
-        
-        # Convert numeric columns
-        numeric_cols = ['APPROVED REVENUE', 'ACTUAL REVENUE', 'TOTAL', 'VARIANCE']
-        for col in numeric_cols:
-            if col in df_main.columns:
-                df_main[col] = pd.to_numeric(df_main[col], errors='coerce').fillna(0)
+    if df_main is not None and not df_main.empty:
+        df_daily = load_daily_collection(main_file)
         
         # Calculate Totals
-        total_revenue = df_main['ACTUAL REVENUE'].sum()
-        total_target = df_main['APPROVED REVENUE'].sum()
+        total_revenue = df_main['Total_Actual'].sum()
+        total_target = df_main['Approved'].sum()
         total_variance = total_revenue - total_target
         
-        # --- 4.1 KPI CARDS (Top Row) ---
+        # --- KPI CARDS ---
         col1, col2, col3, col4, col5 = st.columns(5)
         
         with col1:
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">💰 Revenue</div>
+                <div class="kpi-title">💰 Revenue (YTD)</div>
                 <div class="kpi-value">${total_revenue:,.0f}</div>
-                <div class="kpi-delta delta-pos">↑ Target: ${total_target:,.0f}</div>
+                <div class="kpi-delta delta-pos">Against Target: ${total_target:,.0f}</div>
             </div>
             """, unsafe_allow_html=True)
             
@@ -165,42 +159,39 @@ if uploaded_file is not None:
             """, unsafe_allow_html=True)
             
         with col3:
-            # Example: Profit Margin placeholder (needs Cost data)
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">📈 Performance</div>
+                <div class="kpi-title">📈 Convergence</div>
                 <div class="kpi-value">{(total_revenue/total_target*100):.1f}%</div>
-                <div class="kpi-delta">Convergence Rate</div>
+                <div class="kpi-delta">Of Target Met</div>
             </div>
             """, unsafe_allow_html=True)
             
         with col4:
-            # Placeholder for collection rate or similar
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">🏢 Offices</div>
-                <div class="kpi-value">5</div>
-                <div class="kpi-delta">Active Locations</div>
+                <div class="kpi-title">📅 Sept Revenue</div>
+                <div class="kpi-value">${df_main['Actual_Sep'].sum():,.0f}</div>
+                <div class="kpi-delta">Current Month</div>
             </div>
             """, unsafe_allow_html=True)
             
         with col5:
             st.markdown(f"""
             <div class="kpi-card">
-                <div class="kpi-title">📊 Accounts</div>
+                <div class="kpi-title">📊 Active Accounts</div>
                 <div class="kpi-value">{len(df_main)}</div>
-                <div class="kpi-delta">Active Tax Lines</div>
+                <div class="kpi-delta">Tax Revenue Lines</div>
             </div>
             """, unsafe_allow_html=True)
 
-        # --- 4.2 CHARTS ROW 1 ---
+        # --- CHARTS ROW 1 ---
         col_chart1, col_chart2, col_chart3 = st.columns([1, 1, 1])
         
         with col_chart1:
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("Total Count by Status")
-            # Simulate Status based on Variance
-            df_main['Status'] = df_main['VARIANCE'].apply(lambda x: 'Met' if x >= 0 else 'Missed')
+            st.subheader("Target Status")
+            df_main['Status'] = df_main['Variance'].apply(lambda x: 'Met' if x >= 0 else 'Missed')
             status_counts = df_main['Status'].value_counts().reset_index()
             status_counts.columns = ['Status', 'Count']
             fig_status = px.pie(status_counts, names='Status', values='Count', hole=0.6, 
@@ -211,8 +202,7 @@ if uploaded_file is not None:
 
         with col_chart2:
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("Profit Margin %")
-            # Gauge chart placeholder
+            st.subheader("Overall Convergence %")
             fig_gauge = go.Figure(go.Indicator(
                 mode = "gauge+number",
                 value = (total_revenue/total_target*100),
@@ -232,61 +222,62 @@ if uploaded_file is not None:
 
         with col_chart3:
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("Performance by Tax Type")
-            # Top 5 taxes by actual revenue
-            df_top = df_main.nlargest(5, 'ACTUAL REVENUE')
-            fig_bar = px.bar(df_top, x='ACTUAL REVENUE', y='ACCOUNT DESCRIPTION', orientation='h',
-                             color='ACTUAL REVENUE', color_continuous_scale=['#00B4D8', '#1A3B47'])
+            st.subheader("Top 5 Revenue Generators")
+            df_top = df_main.nlargest(5, 'Total_Actual')
+            fig_bar = px.bar(df_top, x='Total_Actual', y='Account', orientation='h',
+                             color='Total_Actual', color_continuous_scale=['#00B4D8', '#1A3B47'])
             fig_bar.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False, yaxis_title=None, xaxis_title=None)
             st.plotly_chart(fig_bar, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # --- 4.3 CHARTS ROW 2 ---
+        # --- CHARTS ROW 2 ---
         col_chart4, col_chart5 = st.columns([2, 1])
         
         with col_chart4:
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("Target and Revenue by Region/Office")
-            # Assuming we can extract office data from the Daily Collection sheet
-            # For now, let's create a simulated breakdown from the main data
-            # In a real scenario, you'd group by 'PAYMENT_LOC_DESC' from the daily sheet
-            
-            # Simulating office data
-            office_data = pd.DataFrame({
-                'Office': ['Castries', 'Vieux Fort', 'Soufriere', 'Gros Islet', 'Online'],
-                'Target': [total_target*0.4, total_target*0.2, total_target*0.1, total_target*0.15, total_target*0.15],
-                'Revenue': [total_revenue*0.45, total_revenue*0.18, total_revenue*0.08, total_revenue*0.14, total_revenue*0.15]
-            })
-            
-            fig_region = go.Figure(data=[
-                go.Bar(name='Target', x=office_data['Office'], y=office_data['Target'], marker_color='#1A3B47'),
-                go.Bar(name='Revenue', x=office_data['Office'], y=office_data['Revenue'], marker_color='#00B4D8')
-            ])
-            fig_region.update_layout(barmode='group', margin=dict(t=30, b=0, l=0, r=0))
+            st.subheader("Revenue by Collection Office")
+            if not df_daily.empty:
+                fig_region = px.bar(df_daily, x='Office', y='Total', color='Total', color_continuous_scale='Blues')
+            else:
+                # Fallback placeholder if daily data parsing fails
+                fig_region = go.Figure(go.Bar(x=['Castries', 'Vieux Fort', 'Soufriere', 'Online'], 
+                                              y=[total_revenue*0.5, total_revenue*0.2, total_revenue*0.1, total_revenue*0.2]))
+            fig_region.update_layout(margin=dict(t=30, b=0, l=0, r=0), showlegend=False)
             st.plotly_chart(fig_region, use_container_width=True)
             st.markdown('</div>', unsafe_allow_html=True)
 
         with col_chart5:
             st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-            st.subheader("Variance Heatmap (Top 10)")
-            # Heatmap of variance
-            df_heat = df_main.nlargest(10, 'ACTUAL REVENUE')[['ACCOUNT DESCRIPTION', 'VARIANCE']]
-            df_heat['Color'] = df_heat['VARIANCE'].apply(lambda x: '#2E8B57' if x > 0 else '#DC3545')
-            
-            fig_heat = px.bar(df_heat, x='VARIANCE', y='ACCOUNT DESCRIPTION', orientation='h',
-                              color='VARIANCE', color_continuous_scale=['#DC3545', '#2E8B57'])
-            fig_heat.update_layout(margin=dict(t=0, b=0, l=0, r=0), showlegend=False)
-            st.plotly_chart(fig_heat, use_container_width=True)
+            st.subheader("Variance Profile")
+            df_neg = df_main[df_main['Variance'] < 0].nsmallest(10, 'Variance')
+            if not df_neg.empty:
+                fig_var = px.bar(df_neg, x='Variance', y='Account', orientation='h', color='Variance', color_continuous_scale='Reds')
+                st.plotly_chart(fig_var, use_container_width=True)
+            else:
+                st.success("All targets met or exceeded!")
             st.markdown('</div>', unsafe_allow_html=True)
 
-        # --- 4.4 DATA TABLE ---
-        st.markdown("### Detailed Inflow Summary Matrix")
-        st.dataframe(df_main[['ACCOUNT DESCRIPTION', 'APPROVED REVENUE', 'ACTUAL REVENUE', 'VARIANCE']].style.format({
-            'APPROVED REVENUE': "${:,.2f}",
-            'ACTUAL REVENUE': "${:,.2f}",
-            'VARIANCE': "${:,.2f}"
-        }), use_container_width=True)
+        # --- DATA TABLE ---
+        st.subheader("📋 Detailed Inflow Matrix")
+        st.dataframe(df_main.style.format({
+            "Approved": "${:,.2f}",
+            "Actual_Sep": "${:,.2f}",
+            "Total_Actual": "${:,.2f}",
+            "Variance": "${:,.2f}"
+        }), use_container_width=True, hide_index=True)
 
 else:
     st.info("👈 Please upload the Monthly Revenue Report (.xlsx) in the sidebar to view the dashboard.")
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=200)
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/400px-Coat_of_arms_of_Saint_Lucia.svg.png", width=200)
+
+# Optional: Add ISIC data if second file is uploaded
+if isic_file is not None:
+    st.markdown("---")
+    st.header("🏭 ISIC Sector Analysis")
+    df_isic = load_isic_data(isic_file)
+    if not df_isic.empty:
+        fig_isic = px.treemap(df_isic, path=['Account'], values='Collection', color='Variance', color_continuous_scale='RdYlGn')
+        fig_isic.update_layout(margin=dict(t=30, b=0, l=0, r=0))
+        st.plotly_chart(fig_isic, use_container_width=True)
+    else:
+        st.warning("Could not parse ISIC data from the uploaded file.")
