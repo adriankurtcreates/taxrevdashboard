@@ -1,11 +1,14 @@
 import streamlit as st
 import pandas as pd
-import plotly.graph_objects as px
-import plotly.express as px_exp
-from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
+from docx import Document
+from docx.shared import Inches, Pt
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+import io
 
-# Set up page configurations for IMF presentation standards
-st.set_page_config(page_title="Saint Luce IRD Intelligence Workspace", layout="wide")
+# Page settings matching IMF presentation formatting guidelines
+st.set_page_config(page_title="Saint Lucia IRD Analytics Workspace", layout="wide")
 
 TAX_META = {
     "3111 001": {"name": "Personal Income Tax", "ctx": "Predictable baseline employment payroll contributions across important local workforce engines."},
@@ -28,30 +31,20 @@ TAX_META = {
 
 FISCAL_MONTHS = ["APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER", "NOVEMBER", "DECEMBER", "JANUARY", "FEBRUARY", "MARCH"]
 
-st.title("St. Lucia IRD — Revenue Intelligence Workspace")
+st.title("🇱🇨 Saint Lucia IRD — Revenue Intelligence Workspace")
 st.caption("Strategic Research Terminal — Optimized for IMF Chapter IV Review Cycles")
 
-# --------------------------------===================
-# FILE UPLOADER PORTAL
-# --------------------------------===================
+# Sidebar file upload system
 st.sidebar.header("📂 Data Ingestion Portal")
-uploaded_file = st.sidebar.file_input("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
+uploaded_file = st.sidebar.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
 
-# Mapped baseline figures parsed directly from your verified September data logs
+# Extract verified September logs data into the engine
 base_act = {"3111 001": 11847649.68, "3111 002": 953968.67, "3112 001": 40605384.68, "3112 002": 2385422.93, "3113 001": 826129.29, "3113 002": 762437.03, "3131 001": 694755.29, "3141 001": 18328871.14, "3141 004": 15950.38, "3141 005": 429012.58, "3141 006": 1385801.94, "3142 005": 1418154.88, "3142 006": 1885751.82, "3143 010": 250.00, "3151 009": 319230.69, "3422 008": 0.00}
 base_proj = {"3111 001": 11098530.86, "3111 002": 1942250.94, "3112 001": 40555120.00, "3112 002": 1661736.01, "3113 001": 2782866.68, "3113 002": 409692.00, "3131 001": 798744.28, "3141 001": 17343832.40, "3141 004": 0.00, "3141 005": 468766.43, "3141 006": 4108135.39, "3142 005": 1570829.00, "3142 006": 2263723.40, "3143 010": 0.00, "3151 009": 198031.85, "3422 008": 542.92}
 
 actuals_dict = {k: [v*0.9, v*0.95, v, v*1.02, v*0.98, v, 0, 0, 0, 0, 0, 0] for k, v in base_act.items()}
 projections_dict = {k: [v, v, v, v, v, v, v, v, v, v, v, v] for k, v in base_proj.items()}
 
-if uploaded_file is not None:
-    try:
-        xl = pd.ExcelFile(uploaded_file)
-        st.sidebar.success("🎉 Document connected successfully!")
-    except Exception as e:
-        st.sidebar.error(f"Error parsing workbook: {e}")
-
-# Scope Selection Controls
 st.sidebar.subheader("📈 Interface Scope Filters")
 scope = st.sidebar.selectbox("Isolate Scope Range", ["September 2026", "Quarter 1 (Apr-Jun)", "Quarter 2 (Jul-Sep)", "Full Fiscal Year-to-Date"])
 
@@ -64,7 +57,6 @@ elif scope == "Quarter 2 (Jul-Sep)":
 else:
     month_indices = [0, 1, 2, 3, 4, 5]
 
-# Process and merge matrix figures
 matrix_data = []
 total_act, total_proj = 0, 0
 
@@ -86,7 +78,7 @@ for code, meta in TAX_META.items():
         "Convergence %": perf_pct
     })
 
-# High-Level Metrics Layout
+# Render High-Level KPI Blocks
 kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
 kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
@@ -94,29 +86,28 @@ net_var = total_act - total_proj
 kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}" if net_var >= 0 else f"{net_var:,.2f}")
 kpi4.metric("Convergence Efficiency", f"{(total_act/total_proj*100):.2f}%")
 
-# --------------------------------===================
-# VISUAL GRAPHICS ENGINE
-# --------------------------------===================
+# 🇱🇨 ST. LUCIA HIGH-FIDELITY NATIONAL COLOR CHARTS
 st.subheader("📊 Strategic Presentation Graphics")
 df = pd.DataFrame(matrix_data)
 
-fig1 = px.Bar()
-fig1.add_trace(px.Bar(x=df["Description"], y=df["Projected Target"], name="Projected Target", marker_color="#94a3b8"))
-fig1.add_trace(px.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Collected", marker_color="#1e3a8a"))
+# Chart 1: Actual vs Budget
+fig1 = go.Figure()
+fig1.add_trace(go.Bar(x=df["Description"], y=df["Projected Target"], name="Budget Projection", marker_color="#FCD34D")) # St Lucia Gold
+fig1.add_trace(go.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Revenue", marker_color="#0284C7")) # St Lucia Sky Blue
 fig1.update_layout(barmode="group", title="Comparative Target Convergence Evaluation by Revenue Account", margin=dict(t=40, b=40, l=40, r=40))
 st.plotly_chart(fig1, use_container_width=True)
 
 col_left, col_right = st.columns(2)
 
 with col_left:
-    # Variance Breakdown Pie Distribution
+    # Chart 2: Variance Share
     df_neg = df[df["Net Variance"] != 0].copy()
     df_neg["Abs Variance"] = df_neg["Net Variance"].abs()
-    fig2 = px_exp.pie(df_neg, values="Abs Variance", names="Description", title="Proportional Variance Footprint Distribution Matrix", color_discrete_sequence=px_exp.colors.sequential.Blues_r)
+    fig2 = px.pie(df_neg, values="Abs Variance", names="Description", title="Proportional Variance Footprint Distribution Matrix", color_discrete_sequence=px.colors.sequential.Blues_r)
     st.plotly_chart(fig2, use_container_width=True)
 
 with col_right:
-    # Cumulative Performance Trend Mapping line chart
+    # Chart 3: Progression Path
     trend_data = []
     running_act, running_proj = 0, 0
     for idx, m in enumerate(FISCAL_MONTHS[:6]):
@@ -126,10 +117,10 @@ with col_right:
         trend_data.append({"Month": m, "Type": "Cumulative Target Projection", "Value": running_proj})
     
     df_trend = pd.DataFrame(trend_data)
-    fig3 = px_exp.line(df_trend, x="Month", y="Value", color="Type", title="Fiscal Year Progression Path Tracking (April - March)", markers=True, color_discrete_map={"Cumulative Actual Inflows": "#1e3a8a", "Cumulative Target Projection": "#cbd5e1"})
+    fig3 = px.line(df_trend, x="Month", y="Value", color="Type", title="Fiscal Year Progression Path Tracking (April - September)", markers=True, color_discrete_map={"Cumulative Actual Inflows": "#0284C7", "Cumulative Target Projection": "#FCD34D"})
     st.plotly_chart(fig3, use_container_width=True)
 
-# Main Interactive Data Grid
+# Main Summary Matrix Grid
 st.subheader("📋 Detailed Inflow Summary Matrix")
 st.dataframe(df.style.format({
     "Projected Target": "${:,.2f}",
@@ -139,7 +130,7 @@ st.dataframe(df.style.format({
 }), use_container_width=True, hide_index=True)
 
 # --------------------------------===================
-# PROGRAMMATIC VARIANCE NARRATIVE TEXT COMPILED LIVE
+# LIVE WORD DOCUMENT EXPORTER (.DOCX) ENGINE
 # --------------------------------===================
 st.subheader("📝 Automated Variance Notes Briefing Generator")
 
@@ -156,6 +147,12 @@ VARIANCE ANALYSIS BY TAX TYPE
 --------------------------------------------------------------------------------
 """
 
+# Initialize clean word document template structure
+doc = Document()
+doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', level=1)
+doc.add_heading(f'Revenue Collection Brief — Scope: {scope}', level=2)
+doc.add_paragraph(f"For the evaluated interval scope tracking {scope}, the Inland Revenue Department projected aggregate receipts of $ {total_proj:,.2f}. Actual collections validation records totaled $ {total_act:,.2f}, resulting in a variance of $ {net_var:,.2f}.\n")
+
 for item in matrix_data:
     code = item["Code"]
     meta = TAX_META[code]
@@ -170,23 +167,38 @@ Variance: {v_fmt} or {item['Convergence %']:.2f}%
 Analytical Assessment:
 Collections under this tax head window track functional seasonal parameters. {meta['ctx']} Performance lines show clear baseline convergence matching targeted tracking models for the historical fiscal period.
 """
-    if code == "3131 001":
+doc.add_heading(f"{code} — {item['Description']}", level=3)
+doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
+doc.add_paragraph(f"Analytical Evaluation: {meta['ctx']} Collections track normal seasonal distribution frameworks for the fiscal lifecycle.")
+if code == "3131 001":
 report_text += "📋 Operational Bound Note: Due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
+doc.add_paragraph("⚠️ Operational Bound Note: Residential property tax moratorium is active; billing applies exclusively to commercial segments.")
 elif code == "3142 006":
 report_text += "📋 Operational Bound Note: The top-performing sectors listed for Stamp Duty may not be a true indicator of which economic sectors are actually generating the underlying transactions. This is because the ISIC code used to log the payment is routinely assigned to the law firm or legal practitioner paying the tax on behalf of their diverse corporate or individual clients.\n"
+doc.add_paragraph("⚠️ Operational Bound Note: Mapped ISIC tags follow transacting legal intermediaries rather than the funding asset classes directly.")
 elif code == "3141 004":
 report_text += "📋 Operational Bound Note: Do not label this tax as obsolete. HAT remains an active registry line for the collection and settlement of legacy arrears, which accounts for ongoing revenue despite no active monthly projections.\n"
+doc.add_paragraph("⚠️ Operational Bound Note: Line tracks active legal collections on historical legacy arrears accounts.")
 elif code == "3422 008":
 report_text += "📋 Operational Bound Note: Due to the active Amnesty extending to December 2027, collections are minimal and result primarily from the waiver of interest, penalties, and fees.\n"
+doc.add_paragraph("⚠️ Operational Bound Note: Minimal volume reflects active waivers under the ongoing statutory Revenue Amnesty framework.")
 elif code == "3141 001":
 report_text += "Historical Trend Analysis (VAT September Base):\n  - September 2024: $ 12,020,500.00\n  - September 2025: $ 11,563,108.43\n  - September 2026: $ 18,328,871.14\nVAT collections in September have exhibited clear resilience with a significant structural expansion over the three-year period. Further observation will be required to confirm this trend.\n"
+doc.add_paragraph("Historical Trend Baseline (September VAT): 2024: $12.02M | 2025: $11.56M | 2026: $18.33M. Demonstrates long-term transaction registry health.")
 elif code == "3141 006":
 report_text += "Historical Trend Analysis (HCSL September Base):\n  - September 2024: $ 1,998,120.00\n  - September 2025: $ 2,273,600.00\n  - September 2026: $ 1,385,801.94\nHCSL collections in September reflect changing transaction trends. No historical trend data exists prior to its implementation in March 2023. Further observation of this activity will have to be noted.\n"
-report_text += f"\nCONCLUSION\nThe overall performance framework produces an aggregate revenue target convergence rate of {(total_act/total_proj*100):.2f}% matching budgeted parameters. Close monitoring of direct and indirect resource streams will be employed as the Department continues to observe developments in key economic sectors to assess the sustainability of collection patterns.\nReport compiled successfully by the Revenue Research Division."
+doc.add_paragraph("Historical Trend Baseline (September HCSL): 2024: $2.00M | 2025: $2.27M | 2026: $1.39M. No records exist prior to initial launch in March 2023.")
+report_text += "--------------------------------------------------------------------------------\n"
 st.text_area("Live Document Transcript Preview", report_text, height=300)
+
+Stream Word document directly as byte download block
+
+bio = io.BytesIO()
+doc.save(bio)
+bio.seek(0)
 st.download_button(
-label="📥 Download Formal Brief Document (.txt)",
-data=report_text,
-file_name=f"SLU_IRD_IMF_Briefing_{scope.replace(' ', '_')}.txt",
-mime="text/plain"
+label="📥 Download Formal Microsoft Word Brief (.docx)",
+data=bio.getvalue(),
+file_name=f"Saint_Lucia_IRD_IMF_Variance_Brief_{scope.replace(' ', '_')}.docx",
+mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
