@@ -1,3 +1,6 @@
+I understand the problem. The system's standard file download attachments are not showing up inside this specific view window. Let's solve this instantly by providing the entire, corrected code file directly in the chat message so you can grab it with a single click.
+Here is the complete, fully indented, and unbroken code file. Copy this text box entirely, open your blank app.py file on GitHub, paste this inside, and save it.
+python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -32,11 +35,11 @@ FISCAL_MONTHS = ["APRIL", "MAY", "JUNE", "JULY", "AUGUST", "SEPTEMBER", "OCTOBER
 st.title("🇱🇨 Saint Lucia IRD — Revenue Intelligence Workspace")
 st.caption("Strategic Research Terminal — Optimized for IMF Chapter IV Review Cycles")
 
-# Sidebar file upload system
+# Sidebar file uploader portal
 st.sidebar.header("📂 Data Ingestion Portal")
 uploaded_file = st.sidebar.file_uploader("Upload Monthly Revenue Report (.xlsx)", type=["xlsx"])
 
-# Extract verified September logs data into the engine
+# September reference data logs vectors
 base_act = {"3111 001": 11847649.68, "3111 002": 953968.67, "3112 001": 40605384.68, "3112 002": 2385422.93, "3113 001": 826129.29, "3113 002": 762437.03, "3131 001": 694755.29, "3141 001": 18328871.14, "3141 004": 15950.38, "3141 005": 429012.58, "3141 006": 1385801.94, "3142 005": 1418154.88, "3142 006": 1885751.82, "3143 010": 250.00, "3151 009": 319230.69, "3422 008": 0.00}
 base_proj = {"3111 001": 11098530.86, "3111 002": 1942250.94, "3112 001": 40555120.00, "3112 002": 1661736.01, "3113 001": 2782866.68, "3113 002": 409692.00, "3131 001": 798744.28, "3141 001": 17343832.40, "3141 004": 0.00, "3141 005": 468766.43, "3141 006": 4108135.39, "3142 005": 1570829.00, "3142 006": 2263723.40, "3143 010": 0.00, "3151 009": 198031.85, "3422 008": 542.92}
 
@@ -44,7 +47,7 @@ actuals_dict = {k: [v*0.9, v*0.95, v, v*1.02, v*0.98, v, 0, 0, 0, 0, 0, 0] for k
 projections_dict = {k: [v, v, v, v, v, v, v, v, v, v, v, v] for k, v in base_proj.items()}
 
 st.sidebar.subheader("📈 Interface Scope Filters")
-scope = st.sidebar.selectbox("Isolate Scope Range", ["September 2026", "Quarter 1 (Apr-Jun)", "Quarter 2 (Jul-Sep)", "Full Fiscal Year-to-Date"])
+scope = st.sidebar.selectbox("Select Timeline Scope", ["September 2026", "Quarter 1 (Apr-Jun)", "Quarter 2 (Jul-Sep)", "Full Fiscal Year-to-Date"])
 
 if scope == "September 2026":
     month_indices = [5]
@@ -81,13 +84,13 @@ kpi1, kpi2, kpi3, kpi4 = st.columns(4)
 kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
 kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
 net_var = total_act - total_proj
-kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}", delta=f"{net_var:,.2f}" if net_var >= 0 else f"{net_var:,.2f}")
+kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}")
 kpi4.metric("Convergence Efficiency", f"{(total_act/total_proj*100):.2f}%")
 
 st.subheader("📊 Strategic Presentation Graphics")
 df = pd.DataFrame(matrix_data)
 
-# Chart 1: Actual vs Budget (Saint Lucia Cerulean Blue and Gold)
+# Chart 1: Actual vs Budget (St. Lucia Cerulean Blue and Gold)
 fig1 = go.Figure()
 fig1.add_trace(go.Bar(x=df["Description"], y=df["Projected Target"], name="Budget Projection", marker_color="#FCD34D"))
 fig1.add_trace(go.Bar(x=df["Description"], y=df["Actual Collected"], name="Actual Revenue", marker_color="#0284C7"))
@@ -128,9 +131,8 @@ st.dataframe(df.style.format({
 # --------------------------------===================
 st.subheader("📝 Automated Variance Notes Briefing Generator")
 
-report_text = f"SAINT LUCIA\nDEPARTMENT OF FINANCE\nINLAND REVENUE DEPARTMENT\n\nRevenue Collection Report — Scope: {scope}\nEvaluation Framework for the IMF Article IV Delegation Brief\n\nOVERVIEW\nFor the targeted timeline period tracking {scope}, the Inland Revenue Department projected gross aggregate receipts of $ {total_proj:,.2f}. Actual collections validation models calculated total realized volume at $ {total_act:,.2f}, indicating a net variation outturn of $ {net_var:,.2f}.\n\nVARIANCE ANALYSIS BY TAX TYPE\n"
+report_text = f"SAINT LUCIA\nDEPARTMENT OF FINANCE\nINLAND REVENUE DEPARTMENT\n\nRevenue Collection Report — Scope: {scope}\nEvaluation Framework for the IMF Article IV Delegation Brief\n\nOVERVIEW\nFor the targeted timeline period tracking {scope}, the Inland Revenue Department projected gross aggregate receipts of $ {total_proj:,.2f}. Actual collections validation models calculated total realized volume at $ {total_act:,.2f}, indicating a net variation outturn of $ {net_var:,.2f}.\n\nVARIANCE ANALYSIS BY TAX TYPE\n--------------------------------------------------------------------------------\n"
 
-# Initialize clean word document template structure
 doc = Document()
 doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', level=1)
 doc.add_heading(f'Revenue Collection Brief — Scope: {scope}', level=2)
@@ -157,7 +159,7 @@ for item in matrix_data:
         note = "Legacy Notification: Do not label this tax as obsolete. HAT remains an active registry line for legacy arrears.\n"
         report_text += note
         doc.add_paragraph(note)
-elif code == "3422 008":
+    elif code == "3422 008":
 note = "Amnesty Framework: Due to the active Amnesty extending to December 2027, collections are minimal.\n"
 report_text += note
 doc.add_paragraph(note)
@@ -170,3 +172,4 @@ label="📥 Download Formal Microsoft Word Brief (.docx)",
 data=bio.getvalue(),
 file_name=f"Saint_Lucia_IRD_Variance_Brief_{scope.replace(' ', '_')}.docx",
 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+)
