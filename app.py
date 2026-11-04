@@ -1,6 +1,3 @@
-I understand the problem. The system's standard file download attachments are not showing up inside this specific view window. Let's solve this instantly by providing the entire, corrected code file directly in the chat message so you can grab it with a single click.
-Here is the complete, fully indented, and unbroken code file. Copy this text box entirely, open your blank app.py file on GitHub, paste this inside, and save it.
-python
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
@@ -43,7 +40,7 @@ uploaded_file = st.sidebar.file_uploader("Upload Monthly Revenue Report (.xlsx)"
 base_act = {"3111 001": 11847649.68, "3111 002": 953968.67, "3112 001": 40605384.68, "3112 002": 2385422.93, "3113 001": 826129.29, "3113 002": 762437.03, "3131 001": 694755.29, "3141 001": 18328871.14, "3141 004": 15950.38, "3141 005": 429012.58, "3141 006": 1385801.94, "3142 005": 1418154.88, "3142 006": 1885751.82, "3143 010": 250.00, "3151 009": 319230.69, "3422 008": 0.00}
 base_proj = {"3111 001": 11098530.86, "3111 002": 1942250.94, "3112 001": 40555120.00, "3112 002": 1661736.01, "3113 001": 2782866.68, "3113 002": 409692.00, "3131 001": 798744.28, "3141 001": 17343832.40, "3141 004": 0.00, "3141 005": 468766.43, "3141 006": 4108135.39, "3142 005": 1570829.00, "3142 006": 2263723.40, "3143 010": 0.00, "3151 009": 198031.85, "3422 008": 542.92}
 
-actuals_dict = {k: [v*0.9, v*0.95, v, v*1.02, v*0.98, v, 0, 0, 0, 0, 0, 0] for k, v in base_act.items()}
+actuals_dict = {k: [v * 0.9, v * 0.95, v, v * 1.02, v * 0.98, v, 0, 0, 0, 0, 0, 0] for k, v in base_act.items()}
 projections_dict = {k: [v, v, v, v, v, v, v, v, v, v, v, v] for k, v in base_proj.items()}
 
 st.sidebar.subheader("📈 Interface Scope Filters")
@@ -66,10 +63,10 @@ for code, meta in TAX_META.items():
     proj_val = sum(projections_dict[code][i] for i in month_indices)
     var_val = act_val - proj_val
     perf_pct = (act_val / proj_val * 100) if proj_val > 0 else 0.0
-    
+
     total_act += act_val
     total_proj += proj_val
-    
+
     matrix_data.append({
         "Code": code,
         "Description": meta["name"],
@@ -85,7 +82,7 @@ kpi1.metric("Actual Inflows (XCD)", f"$ {total_act:,.2f}")
 kpi2.metric("Target Projections (XCD)", f"$ {total_proj:,.2f}")
 net_var = total_act - total_proj
 kpi3.metric("Net Fiscal Variance", f"$ {net_var:,.2f}")
-kpi4.metric("Convergence Efficiency", f"{(total_act/total_proj*100):.2f}%")
+kpi4.metric("Convergence Efficiency", f"{(total_act / total_proj * 100):.2f}%")
 
 st.subheader("📊 Strategic Presentation Graphics")
 df = pd.DataFrame(matrix_data)
@@ -113,7 +110,7 @@ with col_right:
         running_proj += sum(projections_dict[c][idx] for c in TAX_META)
         trend_data.append({"Month": m, "Type": "Cumulative Actual Inflows", "Value": running_act})
         trend_data.append({"Month": m, "Type": "Cumulative Target Projection", "Value": running_proj})
-    
+
     df_trend = pd.DataFrame(trend_data)
     fig3 = px.line(df_trend, x="Month", y="Value", color="Type", title="Fiscal Year Progression Path Tracking (April - September)", markers=True, color_discrete_map={"Cumulative Actual Inflows": "#0284C7", "Cumulative Target Projection": "#FCD34D"})
     st.plotly_chart(fig3, use_container_width=True)
@@ -141,12 +138,12 @@ for item in matrix_data:
     code = item["Code"]
     meta = TAX_META[code]
     v_fmt = f"(${abs(item['Net Variance']):,.2f})" if (item['Net Variance'] < 0) else f"${item['Net Variance']:,.2f}"
-    
+
     report_text += f"\n{code} — {item['Description']}\nProjection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)\n"
-    
+
     doc.add_heading(f"{code} — {item['Description']}", level=3)
     doc.add_paragraph(f"Projection: $ {item['Projected Target']:,.2f}\nActual: $ {item['Actual Collected']:,.2f}\nVariance: {v_fmt} ({item['Convergence %']:.2f}%)")
-    
+
     if code == "3131 001":
         note = "Moratorium Notice: Note that due to the ongoing moratorium on residential property tax, current payments apply exclusively to commercial properties. Arrears collections apply to both.\n"
         report_text += note
@@ -160,16 +157,19 @@ for item in matrix_data:
         report_text += note
         doc.add_paragraph(note)
     elif code == "3422 008":
-note = "Amnesty Framework: Due to the active Amnesty extending to December 2027, collections are minimal.\n"
-report_text += note
-doc.add_paragraph(note)
+        note = "Amnesty Framework: Due to the active Amnesty extending to December 2027, collections are minimal.\n"
+        report_text += note
+        doc.add_paragraph(note)
+
 st.text_area("Live Document Transcript Preview", report_text, height=300)
+
 bio = io.BytesIO()
 doc.save(bio)
 bio.seek(0)
+
 st.download_button(
-label="📥 Download Formal Microsoft Word Brief (.docx)",
-data=bio.getvalue(),
-file_name=f"Saint_Lucia_IRD_Variance_Brief_{scope.replace(' ', '_')}.docx",
-mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    label="📥 Download Formal Microsoft Word Brief (.docx)",
+    data=bio.getvalue(),
+    file_name=f"Saint_Lucia_IRD_Variance_Brief_{scope.replace(' ', '_')}.docx",
+    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 )
