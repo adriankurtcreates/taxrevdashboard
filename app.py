@@ -545,4 +545,127 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns(3)
-c1.markdown
+c1.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Actual</div><div class="kpi-value">${total_actual:,.0f}</div><div class="kpi-delta">Source: {snap_month}</div></div>', unsafe_allow_html=True)
+c2.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Projection</div><div class="kpi-value">${total_proj:,.0f}</div><div class="kpi-delta">{proj_source}</div></div>', unsafe_allow_html=True)
+c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><div class="kpi-value" style="color:{"#2E8B57" if total_var > 0 else "#DC3545"}">${total_var:,.0f}</div></div>', unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Trends", "📅 Daily & Branches", "🏭 Sector Deep-Dive", "📝 Reports"])
+
+with tab1:
+    df_m = df_monthly[
+        df_monthly['Month'].isin(selected_months) &
+        df_monthly['Quarter'].isin(selected_quarters) &
+        df_monthly['Code'].isin(selected_codes)
+    ]
+    if not df_m.empty:
+        st.markdown("### Tax Head Composition Over Time")
+        mc = df_m.groupby(['Month', 'Account'])['Monthly_Actual'].sum().reset_index()
+        mc['Order'] = mc['Month'].map(month_order)
+        mc = mc.sort_values('Order')
+        st.plotly_chart(px.area(mc, x='Month', y='Monthly_Actual', color='Account', groupnorm='fraction'), use_container_width=True)
+
+        st.markdown("### Month-over-Month Growth")
+        mom = df_m.groupby(['Month', 'Account'])['Monthly_Actual'].sum().unstack(fill_value=0)
+        st.dataframe(mom.pct_change().replace([float('inf'), float('-inf')], 0).fillna(0).style.format("{:.1%}"), use_container_width=True)
+    else:
+        st.info("No monthly data available for these filters.")
+
+with tab2:
+    st.markdown("### Daily Collections — Castries (Main Office)")
+    if not df_daily.empty:
+        d = df_daily[df_daily['Month'].isin(selected_months)]
+        if not d.empty:
+            daily_by_day = d.groupby('Day')['Total'].sum().reset_index()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=daily_by_day['Day'], y=daily_by_day['Total'],
+                mode='lines+markers', line=dict(color='#00B4D8', width=3),
+                marker=dict(size=8), fill='tozeroy',
+                fillcolor='rgba(0,180,216,0.15)'
+            ))
+            fig.update_layout(xaxis_title="Day of Month", yaxis_title="Revenue (XCD)",
+                              margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.markdown("### Revenue by Branch / Platform")
+    if not df_offices.empty:
+        o = df_offices[df_offices['Month'].isin(selected_months)]
+        if not o.empty:
+            branch_sum = o.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
+            fig = px.bar(branch_sum, x='Office', y='Total', color='Total',
+                         color_continuous_scale='Blues', text_auto='.2s')
+            fig.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)",
+                              margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("Branch data unavailable.")
+
+with tab3:
+    if not df_isic.empty:
+        st.markdown("### ISIC Sector Deep-Dive")
+        st.caption("⚠️ ISIC data reflects payments made via the IRD's online payment platform only.")
+
+        di = df_isic[df_isic['Month'].isin(selected_months)].copy()
+        if cash_basis == "Current Only" or cash_basis == "All":
+            di['Amount'] = di['Current']
+        elif cash_basis == "Arrears Only":
+            di['Amount'] = di['Arrears']
+        di = di[di['Amount'] > 0]
+
+        if not di.empty:
+            sector_totals = di.groupby('ISIC_Sector')['Amount'].sum().reset_index().sort_values('Amount', ascending=False)
+            top_sectors = sector_totals.head(15)
+
+            st.markdown("#### Top 15 Sectors by Total Revenue")
+            fig = px.bar(top_sectors, x='Amount', y='ISIC_Sector', orientation='h',
+                         color='Amount', color_continuous_scale='Blues')
+            fig.update_layout(xaxis_title="Revenue (XCD)", yaxis_title=None,
+                              margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
+
+            st.markdown("#### Sector Drill-Down")
+            drill_sector = st.selectbox(
+                "Select a sector to see which tax heads it drives:",
+                sector_totals['ISIC_Sector'].tolist()
+            )
+
+            if drill_sector:
+                drill = di[di['ISIC_Sector'] == drill_sector]
+                tax_breakdown = drill.groupby('Tax_Type').agg(
+                    Amount=('Amount', 'sum'),
+                    Transactions=('Amount', 'count')
+                ).reset_index().sort_values('Amount', ascending=False)
+
+                col_a, col_b = st.columns([1, 1])
+                with col_a:
+                    st.markdown(f"**Tax Heads driving {drill_sector}**")
+                    fig_drill = px.pie(tax_breakdown, names='Tax_Type', values='Amount', hole=0.4)
+                    fig_drill.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_drill, use_container_width=True)
+
+                with col_b:
+                    st.markdown("**Amounts by Tax Head**")
+                    st.dataframe(
+                        tax_breakdown.rename(columns={'Tax_Type': 'Tax Head', 'Amount': 'Revenue (XCD)'})
+                        .style.format({'Revenue (XCD)': '${:,.2f}', 'Transactions': '{:,}'}),
+                        use_container_width=True, hide_index=True
+                    )
+        else:
+            st.info("No ISIC data for the selected filters.")
+    else:
+        st.info("Upload ISIC Variance Reports to unlock sector data.")
+
+with tab4:
+    st.markdown(f"### Variance Notes — {snap_month} 2026")
+    st.caption("Generates the IMF-style Word document using the strict Master Prompt template.")
+    if st.button(f"Generate Report for {snap_month}"):
+        with st.spinner("Generating Word document..."):
+            docx_bytes = build_variance_notes_docx(
+                snap_month, total_actual, total_proj, total_var, ytd, df_isic
+            )
+            st.download_button(
+                label="📥 Download Variance Notes (.docx)",
+                data=docx_bytes,
+                file_name=f"Variance_Notes_{snap_month}_2026.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
