@@ -626,29 +626,69 @@ c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><di
 tab1, tab2, tab3, tab4 = st.tabs(["📊 Executive Dashboard", "📅 Daily & Branch", "🏭 Sector Deep-Dive", "📝 Reports"])
 
 # ==============================================================================
-# TAB 1: EXECUTIVE DASHBOARD (Reference Image Style)
+# DYNAMIC CALCULATION FOR CHARTS (Based on Analysis Mode)
+# ==============================================================================
+# Determine the exact time window to analyze based on the sidebar selection
+if analysis_mode == "YTD (Latest Summary)":
+    # Use all months up to and including the snapshot month
+    months_in_scope = FISCAL_MONTHS[:month_order(snap_month) + 1]
+    period_label = f"YTD to {snap_month}"
+elif analysis_mode == "Quarter-End Snapshot":
+    # Use only the months in the quarter of the snapshot month
+    if snap_month in ["April", "May", "June"]: months_in_scope = ["April", "May", "June"]
+    elif snap_month in ["July", "August", "September"]: months_in_scope = ["July", "August", "September"]
+    elif snap_month in ["October", "November", "December"]: months_in_scope = ["October", "November", "December"]
+    else: months_in_scope = ["January", "February", "March"]
+    period_label = f"{get_quarter(snap_month)}"
+else:
+    # Month Snapshot: Use only the selected month
+    months_in_scope = [snap_month]
+    period_label = f"{snap_month} 2026"
+
+# Filter the raw monthly data to just this scope
+df_scope = df_monthly[
+    df_monthly['Month'].isin(months_in_scope) &
+    df_monthly['Code'].isin(selected_codes)
+]
+
+# Recalculate Totals for this specific scope
+scope_actuals = df_scope.groupby('Code')['Monthly_Actual'].sum().reset_index()
+scope_actuals.rename(columns={'Monthly_Actual': 'Scope_Actual'}, inplace=True)
+
+# Get Targets for this scope
+proj_scope = df_calib[
+    df_calib['Month'].isin(months_in_scope) &
+    df_calib['Code'].isin(selected_codes)
+]
+scope_proj = proj_scope.groupby('Code')['Projection'].sum().reset_index()
+
+# Merge
+chart_df = scope_actuals.merge(scope_proj, on='Code', how='outer').fillna(0)
+chart_df = chart_df.merge(ytd[['Code', 'Account']], on='Code', how='left')
+chart_df['Account'] = chart_df['Account'].fillna('Unknown')
+chart_df['Variance'] = chart_df['Scope_Actual'] - chart_df['Projection']
+
+# New totals for the KPI cards
+scope_total_actual = chart_df['Scope_Actual'].sum()
+scope_total_proj = chart_df['Projection'].sum()
+scope_total_var = chart_df['Variance'].sum()
+scope_conv_pct = (scope_total_actual / scope_total_proj * 100) if scope_total_proj > 0 else 0
+
+
+# ==============================================================================
+# TAB 1: EXECUTIVE DASHBOARD (Dynamic)
 # ==============================================================================
 with tab1:
-    # We need data across all selected months for the trend charts
-    df_m = df_monthly[
-        df_monthly['Month'].isin(selected_months) &
-        df_monthly['Quarter'].isin(selected_quarters) &
-        df_monthly['Code'].isin(selected_codes)
-    ]
+    st.markdown(f"### Performance Dashboard — {period_label}")
     
-    # -------------------------------------------------------------------------
-    # ROW 1: KPI CARDS (Visually enhanced)
-    # -------------------------------------------------------------------------
-    st.markdown("### Monthly Revenue Performance Dashboard")
-    
-    # Calculate delta for last month (e.g., September vs August)
-    if not df_m.empty:
-        months_sorted = sorted(df_m['Month'].unique(), key=month_order)
-        latest_month = months_sorted[-1] if months_sorted else None
-        prev_month = months_sorted[-2] if len(months_sorted) > 1 else None
+    # --- ROW 1: KPI CARDS ---
+    if not df_scope.empty:
+        months_sorted = sorted(df_scope['Month'].unique(), key=month_order)
+        latest_month_in_scope = months_sorted[-1] if months_sorted else None
+        prev_month_in_scope = months_sorted[-2] if len(months_sorted) > 1 else None
         
-        current_rev = df_m[df_m['Month'] == latest_month]['Monthly_Actual'].sum() if latest_month else 0
-        prev_rev = df_m[df_m['Month'] == prev_month]['Monthly_Actual'].sum() if prev_month else 0
+        current_rev = df_scope[df_scope['Month'] == latest_month_in_scope]['Monthly_Actual'].sum() if latest_month_in_scope else 0
+        prev_rev = df_scope[df_scope['Month'] == prev_month_in_scope]['Monthly_Actual'].sum() if prev_month_in_scope else 0
         
         if prev_rev > 0:
             delta_pct = ((current_rev - prev_rev) / prev_rev) * 100
@@ -656,175 +696,160 @@ with tab1:
             delta_arrow = "↑" if delta_pct >= 0 else "↓"
             delta_text = f"{delta_arrow} {abs(delta_pct):.1f}%"
         else:
-            delta_pct = 0
             delta_color = "#6C757D"
             delta_text = "N/A"
             
-        # Total convergence
-        conv_pct = (total_actual / total_proj * 100) if total_proj > 0 else 0
-        
-        # Custom card layout (matches the reference image)
         st.markdown(f"""
         <div style="display: flex; gap: 20px; margin-bottom: 20px;">
             <div style="flex: 1; padding: 20px; background-color: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
-                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">YTD Convergence</div>
-                <div style="color: #00B4D8; font-size: 32px; font-weight: bold;">{conv_pct:.1f}%</div>
+                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">{period_label} Convergence</div>
+                <div style="color: #00B4D8; font-size: 32px; font-weight: bold;">{scope_conv_pct:.1f}%</div>
             </div>
             <div style="flex: 1; padding: 20px; background-color: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
-                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">YTD Actual Revenue</div>
-                <div style="color: #1A3B47; font-size: 32px; font-weight: bold;">${total_actual/1e6:,.1f}M</div>
+                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">{period_label} Revenue</div>
+                <div style="color: #1A3B47; font-size: 32px; font-weight: bold;">${scope_total_actual/1e6:,.2f}M</div>
             </div>
             <div style="flex: 1; padding: 20px; background-color: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
-                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">YTD Target</div>
-                <div style="color: #1A3B47; font-size: 32px; font-weight: bold;">${total_proj/1e6:,.1f}M</div>
+                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">{period_label} Target</div>
+                <div style="color: #1A3B47; font-size: 32px; font-weight: bold;">${scope_total_proj/1e6:,.2f}M</div>
             </div>
             <div style="flex: 1; padding: 20px; background-color: #f8f9fa; border-radius: 10px; border: 1px solid #e9ecef;">
-                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">Latest Month Revenue</div>
+                <div style="color: #6C757D; font-size: 14px; font-weight: 600; margin-bottom: 5px;">Latest Month</div>
                 <div style="color: #1A3B47; font-size: 32px; font-weight: bold;">${current_rev/1e6:,.2f}M 
                 <span style="font-size: 16px; color: {delta_color}; margin-left: 10px;">{delta_text}</span></div>
             </div>
         </div>
         """, unsafe_allow_html=True)
 
-    # -------------------------------------------------------------------------
-    # ROW 2: THREE CHARTS
-    # -------------------------------------------------------------------------
+    # --- ROW 2: THREE CHARTS ---
     r2_col1, r2_col2, r2_col3 = st.columns(3)
     
-    # Chart 2A: Donut Chart - Target Status (Met vs Missed)
     with r2_col1:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Target Status</h4>", unsafe_allow_html=True)
+        view_2a = st.radio("View", ["Donut", "Bar"], horizontal=True, label_visibility="collapsed", key="v2a")
         
-        met_count = len(ytd[ytd['Variance'] >= 0])
-        missed_count = len(ytd[ytd['Variance'] < 0])
-        status_df = pd.DataFrame({'Status': ['Met', 'Missed'], 'Count': [met_count, missed_count]})
+        met = len(chart_df[chart_df['Variance'] >= 0])
+        missed = len(chart_df[chart_df['Variance'] < 0])
+        status_df = pd.DataFrame({'Status': ['Met', 'Missed'], 'Count': [met, missed]})
         
-        fig_2a = px.pie(status_df, names='Status', values='Count', hole=0.6,
-                        color='Status', color_discrete_map={'Met': '#00B4D8', 'Missed': '#1A3B47'})
-        fig_2a.update_traces(textposition='inside', textinfo='percent+label')
+        if view_2a == "Donut":
+            fig_2a = px.pie(status_df, names='Status', values='Count', hole=0.6, color='Status', color_discrete_map={'Met': '#00B4D8', 'Missed': '#1A3B47'})
+            fig_2a.update_traces(textposition='inside', textinfo='percent+label')
+        else:
+            fig_2a = px.bar(status_df, x='Status', y='Count', color='Status', color_discrete_map={'Met': '#00B4D8', 'Missed': '#1A3B47'})
+            
         fig_2a.update_layout(margin=dict(t=20, b=0, l=0, r=0), showlegend=False)
         st.plotly_chart(fig_2a, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chart 2B: Column Chart - New Revenue per Month
     with r2_col2:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        # Allow user to swap chart types
-        view_2b = st.radio("View", ["Monthly Revenue", "Monthly Variance"], horizontal=True, label_visibility="collapsed", key="view_2b")
+        view_2b = st.radio("View", ["Monthly Revenue", "Monthly Variance"], horizontal=True, label_visibility="collapsed", key="v2b")
         
         if view_2b == "Monthly Revenue":
-            st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Revenue per Month</h4>", unsafe_allow_html=True)
-            rev_by_month = df_m.groupby('Month')['Monthly_Actual'].sum().reset_index()
+            rev_by_month = df_scope.groupby('Month')['Monthly_Actual'].sum().reset_index()
             rev_by_month['Order'] = rev_by_month['Month'].map(month_order)
             rev_by_month = rev_by_month.sort_values('Order')
-            
             fig_2b = px.bar(rev_by_month, x='Month', y='Monthly_Actual', color_discrete_sequence=['#00B4D8'])
             fig_2b.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)", margin=dict(t=20, b=0, l=0, r=0), showlegend=False)
-            st.plotly_chart(fig_2b, use_container_width=True)
         else:
-            st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Variance per Month</h4>", unsafe_allow_html=True)
-            # We need actual vs pro-rata per month for variance
-            var_by_month = df_m.groupby(['Month', 'Code']).agg(Actual=('Monthly_Actual', 'sum')).reset_index()
-            # Merge pro-rata monthly target
-            proj_month = df_calib[df_calib['Month'].isin(selected_months) & df_calib['Code'].isin(selected_codes)]
-            proj_month = proj_month.groupby(['Month', 'Code'])['Projection'].sum().reset_index()
-            var_by_month = var_by_month.merge(proj_month, on=['Month', 'Code'], how='left').fillna(0)
-            var_by_month['Variance'] = var_by_month['Actual'] - var_by_month['Projection']
-            var_by_month = var_by_month.groupby('Month')['Variance'].sum().reset_index()
-            var_by_month['Order'] = var_by_month['Month'].map(month_order)
-            var_by_month = var_by_month.sort_values('Order')
+            # Calculate variance by month
+            var_month = chart_df.copy() # if only one month, it's just the total variance
+            if len(months_in_scope) > 1:
+                var_by_month = df_scope.groupby('Month')['Monthly_Actual'].sum().reset_index()
+                proj_by_month = proj_scope.groupby('Month')['Projection'].sum().reset_index()
+                var_by_month = var_by_month.merge(proj_by_month, on='Month', how='outer').fillna(0)
+                var_by_month['Variance'] = var_by_month['Monthly_Actual'] - var_by_month['Projection']
+                var_by_month['Order'] = var_by_month['Month'].map(month_order)
+                var_by_month = var_by_month.sort_values('Order')
+                colors = ['#DC3545' if v < 0 else '#2E8B57' for v in var_by_month['Variance']]
+                fig_2b = go.Figure(go.Bar(x=var_by_month['Month'], y=var_by_month['Variance'], marker_color=colors))
+            else:
+                fig_2b = go.Figure(go.Bar(x=['Total'], y=[scope_total_var], marker_color=['#DC3545' if scope_total_var < 0 else '#2E8B57']))
             
-            colors = ['#DC3545' if v < 0 else '#2E8B57' for v in var_by_month['Variance']]
-            fig_2b = go.Figure(go.Bar(x=var_by_month['Month'], y=var_by_month['Variance'], marker_color=colors))
             fig_2b.update_layout(xaxis_title=None, yaxis_title="Variance (XCD)", margin=dict(t=20, b=0, l=0, r=0), showlegend=False)
-            st.plotly_chart(fig_2b, use_container_width=True)
+        st.plotly_chart(fig_2b, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chart 2C: Column Chart - Target vs Actual (Highlight Misses)
     with r2_col3:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Target vs Actual</h4>", unsafe_allow_html=True)
+        view_2c = st.radio("View", ["Target vs Actual", "Convergence Rate"], horizontal=True, label_visibility="collapsed", key="v2c")
         
-        # Merge actual and target
-        ytd_chart = ytd.copy()
-        ytd_chart['Status'] = ytd_chart.apply(lambda r: 'Met' if r['Variance'] >= 0 else 'Missed', axis=1)
+        chart_df['Status'] = chart_df.apply(lambda r: 'Met' if r['Variance'] >= 0 else 'Missed', axis=1)
         
-        # We will create a grouped bar chart
-        fig_2c = go.Figure()
-        fig_2c.add_trace(go.Bar(
-            x=ytd_chart['Code'], y=ytd_chart['YTD_Projection'],
-            name='Target', marker_color='#1A3B47'
-        ))
-        fig_2c.add_trace(go.Bar(
-            x=ytd_chart['Code'], y=ytd_chart['Actual_YTD'],
-            name='Actual', marker_color=ytd_chart['Status'].map({'Met': '#00B4D8', 'Missed': '#F59E0B'})
-        ))
-        fig_2c.update_layout(barmode='group', xaxis_title=None, yaxis_title="Revenue (XCD)", 
-                             margin=dict(t=20, b=0, l=0, r=0), showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        if view_2c == "Target vs Actual":
+            fig_2c = go.Figure()
+            fig_2c.add_trace(go.Bar(x=chart_df['Code'], y=chart_df['Projection'], name='Target', marker_color='#1A3B47'))
+            fig_2c.add_trace(go.Bar(x=chart_df['Code'], y=chart_df['Scope_Actual'], name='Actual', marker_color=chart_df['Status'].map({'Met': '#00B4D8', 'Missed': '#F59E0B'})))
+            fig_2c.update_layout(barmode='group', xaxis_title=None, yaxis_title="Revenue (XCD)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        else:
+            chart_df['Conv'] = (chart_df['Scope_Actual'] / chart_df['Projection'] * 100).fillna(0)
+            fig_2c = px.bar(chart_df, x='Code', y='Conv', color='Conv', color_continuous_scale='RdYlGn', range_y=[0, 150])
+            fig_2c.add_hline(y=100, line_dash="dash", line_color="black", annotation_text="100% Target")
+            fig_2c.update_layout(xaxis_title=None, yaxis_title="Convergence %", showlegend=False)
+            
+        fig_2c.update_layout(margin=dict(t=30, b=0, l=0, r=0))
         st.plotly_chart(fig_2c, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # -------------------------------------------------------------------------
-    # ROW 3: THREE CHARTS
-    # -------------------------------------------------------------------------
+    # --- ROW 3: THREE CHARTS ---
     r3_col1, r3_col2, r3_col3 = st.columns(3)
 
-    # Chart 3A: Multi-level Donut/Pie chart
     with r3_col1:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Revenue by Tax Category</h4>", unsafe_allow_html=True)
+        view_3a = st.radio("View", ["Donut", "Treemap"], horizontal=True, label_visibility="collapsed", key="v3a")
         
-        # Map tax heads to categories
-        cat_map = {
-            "3111": "Income Tax", "3112": "Income Tax", "3113": "Income Tax",
-            "3131": "Property Tax", "3141": "Goods & Services", "3142": "Excises",
-            "3143": "Permissions", "3151": "Customs", "3422": "Admin Fees"
-        }
-        ytd_cat = ytd.copy()
-        ytd_cat['Category'] = ytd_cat['Code'].apply(lambda x: cat_map.get(x[:4], "Other"))
+        cat_map = {"3111": "Income Tax", "3112": "Income Tax", "3113": "Income Tax", "3131": "Property Tax", "3141": "Goods & Services", "3142": "Excises", "3143": "Permissions", "3151": "Customs", "3422": "Admin Fees"}
+        chart_df['Category'] = chart_df['Code'].apply(lambda x: cat_map.get(x[:4], "Other"))
+        cat_df = chart_df.groupby('Category')['Scope_Actual'].sum().reset_index()
         
-        fig_3a = px.pie(ytd_cat, names='Category', values='Actual_YTD', hole=0.5,
-                        color_discrete_sequence=px.colors.qualitative.Pastel)
-        fig_3a.update_traces(textposition='inside', textinfo='percent+label')
+        if view_3a == "Donut":
+            fig_3a = px.pie(cat_df, names='Category', values='Scope_Actual', hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_3a.update_traces(textposition='inside', textinfo='percent+label')
+        else:
+            fig_3a = px.treemap(cat_df, path=['Category'], values='Scope_Actual', color='Scope_Actual', color_continuous_scale='Blues')
+            
         fig_3a.update_layout(margin=dict(t=20, b=0, l=0, r=0), showlegend=False)
         st.plotly_chart(fig_3a, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chart 3B: 100% Stacked Column Chart (Current vs Arrears)
     with r3_col2:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Current vs Arrears</h4>", unsafe_allow_html=True)
+        view_3b = st.radio("View", ["Current vs Arrears", "Top vs Bottom"], horizontal=True, label_visibility="collapsed", key="v3b")
         
-        # Split YTD data into Current vs Arrears based on code suffix
-        # Assuming codes ending in 001 are Current, 002 are Arrears
-        ytd_stack = ytd.copy()
-        ytd_stack['Type'] = ytd_stack['Code'].apply(lambda x: 'Arrears' if x.endswith('002') else 'Current')
-        
-        # We need to calculate proportion for each tax head
-        stack_df = ytd_stack.groupby(['Account', 'Type'])['Actual_YTD'].sum().reset_index()
-        # Filter out zeroes to avoid clutter
-        stack_df = stack_df[stack_df['Actual_YTD'] > 0]
-        
-        fig_3b = px.bar(stack_df, x='Account', y='Actual_YTD', color='Type',
-                        color_discrete_map={'Current': '#00B4D8', 'Arrears': '#1A3B47'},
-                        barmode='relative')
-        fig_3b.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)", margin=dict(t=20, b=0, l=0, r=0))
+        if view_3b == "Current vs Arrears":
+            # Split YTD data into Current vs Arrears based on code suffix
+            chart_df['Type'] = chart_df['Code'].apply(lambda x: 'Arrears' if x.endswith('002') else 'Current')
+            stack_df = chart_df.groupby(['Account', 'Type'])['Scope_Actual'].sum().reset_index()
+            stack_df = stack_df[stack_df['Scope_Actual'] > 0]
+            fig_3b = px.bar(stack_df, x='Account', y='Scope_Actual', color='Type', color_discrete_map={'Current': '#00B4D8', 'Arrears': '#1A3B47'}, barmode='relative')
+            fig_3b.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)", showlegend=True, legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
+        else:
+            sorted_df = chart_df.sort_values('Scope_Actual', ascending=False)
+            top5 = sorted_df.head(5)
+            bottom5 = sorted_df.tail(5)
+            combined = pd.concat([top5, bottom5])
+            colors = ['#00B4D8']*5 + ['#DC3545']*5
+            fig_3b = go.Figure(go.Bar(x=combined['Account'], y=combined['Scope_Actual'], marker_color=colors))
+            fig_3b.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)", showlegend=False)
+            
+        fig_3b.update_layout(margin=dict(t=20, b=0, l=0, r=0))
         st.plotly_chart(fig_3b, use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chart 3C: 100% Stacked Column Chart (By Branch)
     with r3_col3:
         st.markdown('<div class="chart-container">', unsafe_allow_html=True)
-        st.markdown("<h4 style='text-align: center; margin-bottom: 0;'>Branch Contribution</h4>", unsafe_allow_html=True)
+        view_3c = st.radio("View", ["Branch Bar", "Branch Pie"], horizontal=True, label_visibility="collapsed", key="v3c")
         
-        # Use the office data if available
         if not df_offices.empty:
-            o = df_offices[df_offices['Month'].isin(selected_months)]
+            o = df_offices[df_offices['Month'].isin(months_in_scope)]
             branch_sum = o.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
             
-            fig_3c = px.bar(branch_sum, x='Total', y='Office', orientation='h',
-                            color='Office', color_discrete_sequence=px.colors.qualitative.Set3)
+            if view_3c == "Branch Bar":
+                fig_3c = px.bar(branch_sum, x='Total', y='Office', orientation='h', color='Office', color_discrete_sequence=px.colors.qualitative.Set3)
+            else:
+                fig_3c = px.pie(branch_sum, names='Office', values='Total', hole=0.4, color_discrete_sequence=px.colors.qualitative.Set3)
+                
             fig_3c.update_layout(xaxis_title="Revenue (XCD)", yaxis_title=None, margin=dict(t=20, b=0, l=0, r=0), showlegend=False)
             st.plotly_chart(fig_3c, use_container_width=True)
         else:
@@ -832,74 +857,47 @@ with tab1:
         st.markdown('</div>', unsafe_allow_html=True)
 
 # ==============================================================================
-# TAB 2: DAILY & BRANCHES (Enhanced Interactivity)
+# TAB 2: DAILY & BRANCHES
 # ==============================================================================
 with tab2:
-    st.markdown("### Daily Collections & Branch Breakdown")
+    st.markdown(f"### Daily Collections — {period_label}")
     
-    # Toggle for view
-    view_t2 = st.radio("Display Style", ["Daily Trend", "Day of Week", "Branch Focus"], horizontal=True, label_visibility="collapsed")
+    view_t2 = st.radio("Display Style", ["Daily Trend", "Branch Focus"], horizontal=True, label_visibility="collapsed", key="v_t2")
     
     if view_t2 == "Daily Trend":
-        st.markdown("#### Daily Collections — Castries (Main Office)")
         if not df_daily.empty:
-            d = df_daily[df_daily['Month'].isin(selected_months)]
+            d = df_daily[df_daily['Month'].isin(months_in_scope)]
             if not d.empty:
                 daily_by_day = d.groupby('Day')['Total'].sum().reset_index()
                 fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=daily_by_day['Day'], y=daily_by_day['Total'],
-                    mode='lines+markers', line=dict(color='#00B4D8', width=3),
-                    marker=dict(size=8), fill='tozeroy',
-                    fillcolor='rgba(0,180,216,0.15)'
-                ))
+                fig.add_trace(go.Scatter(x=daily_by_day['Day'], y=daily_by_day['Total'], mode='lines+markers', line=dict(color='#00B4D8', width=3), marker=dict(size=8), fill='tozeroy', fillcolor='rgba(0,180,216,0.15)'))
                 fig.update_layout(xaxis_title="Day of Month", yaxis_title="Revenue (XCD)", margin=dict(t=20, b=20, l=20, r=20))
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Daily data not available.")
-
-    elif view_t2 == "Day of Week":
-        st.markdown("#### Collections by Day of Week")
-        if not df_daily.empty:
-            d = df_daily[df_daily['Month'].isin(selected_months)].copy()
-            if not d.empty:
-                # Map day number to day name (approximate)
-                # Note: Without full dates, we can't get precise days of week without assumptions.
-                # For simplicity, we'll bucket into weekly segments.
-                d['Week'] = pd.cut(d['Day'], bins=[0, 7, 14, 21, 28, 31], labels=['Week 1', 'Week 2', 'Week 3', 'Week 4', 'Week 5'])
-                week_sum = d.groupby('Week', observed=False)['Total'].sum().reset_index()
-                
-                fig = px.bar(week_sum, x='Week', y='Total', color='Total', color_continuous_scale='Blues')
-                fig.update_layout(xaxis_title="Week of Month", yaxis_title="Revenue (XCD)", margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Daily data not available.")
             
     else:
-        st.markdown("#### Revenue by Branch / Platform")
         if not df_offices.empty:
-            o = df_offices[df_offices['Month'].isin(selected_months)]
+            o = df_offices[df_offices['Month'].isin(months_in_scope)]
             if not o.empty:
                 branch_sum = o.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
-                fig = px.bar(branch_sum, x='Office', y='Total', color='Total',
-                             color_continuous_scale='Blues', text_auto='.2s')
+                fig = px.bar(branch_sum, x='Office', y='Total', color='Total', color_continuous_scale='Blues', text_auto='.2s')
                 fig.update_layout(xaxis_title=None, yaxis_title="Revenue (XCD)", margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("Branch data not available.")
 
 # ==============================================================================
-# TAB 3: SECTOR DEEP-DIVE (Enhanced)
+# TAB 3: SECTOR DEEP-DIVE
 # ==============================================================================
 with tab3:
     if not df_isic.empty:
-        st.markdown("### ISIC Sector Deep-Dive")
+        st.markdown(f"### ISIC Sector Deep-Dive — {period_label}")
         st.caption("⚠️ ISIC data reflects payments made via the IRD's online payment platform only.")
 
-        # Toggle for view
-        view_t3 = st.radio("View", ["Sector Performance", "Tax Head Drill-Down"], horizontal=True, label_visibility="collapsed")
+        view_t3 = st.radio("View", ["Sector Performance", "Tax Head Drill-Down"], horizontal=True, label_visibility="collapsed", key="v_t3")
         
-        di = df_isic[df_isic['Month'].isin(selected_months)].copy()
+        di = df_isic[df_isic['Month'].isin(months_in_scope)].copy()
         if cash_basis == "Current Only" or cash_basis == "All":
             di['Amount'] = di['Current']
         elif cash_basis == "Arrears Only":
@@ -908,39 +906,50 @@ with tab3:
 
         if not di.empty:
             if view_t3 == "Sector Performance":
-                st.markdown("#### Top 15 Sectors by Total Revenue")
                 sector_totals = di.groupby('ISIC_Sector')['Amount'].sum().reset_index().sort_values('Amount', ascending=False)
                 top_sectors = sector_totals.head(15)
 
-                # Toggle chart type
                 chart_type_t3 = st.radio("Chart Type", ["Bar", "Treemap", "Pie"], horizontal=True, label_visibility="collapsed", key="chart_t3")
                 
                 if chart_type_t3 == "Bar":
-                    fig = px.bar(top_sectors, x='Amount', y='ISIC_Sector', orientation='h',
-                                 color='Amount', color_continuous_scale='Blues')
+                    fig = px.bar(top_sectors, x='Amount', y='ISIC_Sector', orientation='h', color='Amount', color_continuous_scale='Blues')
                 elif chart_type_t3 == "Treemap":
-                    fig = px.treemap(top_sectors, path=['ISIC_Sector'], values='Amount',
-                                     color='Amount', color_continuous_scale='Blues')
+                    fig = px.treemap(top_sectors, path=['ISIC_Sector'], values='Amount', color='Amount', color_continuous_scale='Blues')
                 else:
-                    fig = px.pie(top_sectors, names='ISIC_Sector', values='Amount', hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
+                    fig = px.pie(top_sectors, names='ISIC_Sector', values='Amount', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
                 
                 fig.update_layout(xaxis_title="Revenue (XCD)", yaxis_title=None, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
                 
             else:
-                st.markdown("#### Tax Head Drill-Down")
                 tax_options = di['Tax_Type'].unique()
                 drill_tax = st.selectbox("Select a Tax Head to see its top sectors:", tax_options)
                 
                 drill = di[di['Tax_Type'] == drill_tax]
                 tax_sectors = drill.groupby('ISIC_Sector')['Amount'].sum().nlargest(10).reset_index()
                 
-                fig = px.bar(tax_sectors, x='Amount', y='ISIC_Sector', orientation='h',
-                             color='Amount', color_continuous_scale='Blues')
+                fig = px.bar(tax_sectors, x='Amount', y='ISIC_Sector', orientation='h', color='Amount', color_continuous_scale='Blues')
                 fig.update_layout(xaxis_title="Revenue (XCD)", yaxis_title=None, margin=dict(t=20, b=20, l=20, r=20))
                 st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No ISIC data for the selected filters.")
     else:
         st.info("Upload ISIC Variance Reports to unlock sector data.")
+
+# ==============================================================================
+# TAB 4: REPORTS
+# ==============================================================================
+with tab4:
+    st.markdown(f"### Variance Notes — {snap_month} 2026")
+    st.caption("Generates the IMF-style Word document using the strict Master Prompt template.")
+    if st.button(f"Generate Report for {snap_month}"):
+        with st.spinner("Generating Word document..."):
+            docx_bytes = build_variance_notes_docx(
+                snap_month, total_actual, total_proj, total_var, ytd, df_isic
+            )
+            st.download_button(
+                label="📥 Download Variance Notes (.docx)",
+                data=docx_bytes,
+                file_name=f"Variance_Notes_{snap_month}_2026.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            )
