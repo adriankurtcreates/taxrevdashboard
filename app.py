@@ -8,7 +8,7 @@ from datetime import datetime
 from docx import Document
 
 # ==============================================================================
-# PAGE CONFIG
+# PAGE CONFIG & CSS
 # ==============================================================================
 st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
 
@@ -23,8 +23,6 @@ st.markdown("""
     .narrative-box { background-color: #f8f9fa; border-left: 5px solid #00B4D8; padding: 15px; margin-bottom: 20px; border-radius: 5px; font-size: 16px; }
     .snapshot-badge { display: inline-block; background-color: #00B4D8; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
     .snapshot-badge-warn { display: inline-block; background-color: #F59E0B; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
-    .integrity-ok { background-color: #D4EDDA; border: 1px solid #28A745; padding: 10px; border-radius: 5px; font-size: 13px; margin-bottom: 10px; }
-    .integrity-warn { background-color: #FFF3CD; border: 1px solid #FFC107; padding: 10px; border-radius: 5px; font-size: 13px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -51,11 +49,8 @@ TAX_HEADS = {
     "3142 006": "Stamp Duty - Inland Revenue", "3143 010": "Telecommunication Class Licence",
     "3151 009": "Passenger Facility Fee", "3422 008": "Collection Fees - Towns & Villages",
 }
-# Code aliases — file variants that map to canonical codes
 CODE_ALIASES = {
-    "362 - 011": "3422 008",
-    "362-011": "3422 008",
-    "362 011": "3422 008",
+    "362 - 011": "3422 008", "362-011": "3422 008", "362 011": "3422 008",
 }
 QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2", "December": "Q3", "March": "Q4"}
 
@@ -64,15 +59,15 @@ QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2", "December": "Q3", "March"
 # ==============================================================================
 def normalize_code(code):
     if pd.isna(code): return ""
-    normalized = re.sub(r'\s+', ' ', str(code).strip())
-    return CODE_ALIASES.get(normalized, normalized)
+    n = re.sub(r'\s+', ' ', str(code).strip())
+    return CODE_ALIASES.get(n, n)
 
 def find_month_in_text(text):
     if not text: return None
-    text_upper = str(text).upper()
-    for alias in sorted(MONTH_ALIASES.keys(), key=len, reverse=True):
-        if re.search(r'\b' + alias + r'\b', text_upper):
-            return MONTH_ALIASES[alias]
+    t = str(text).upper()
+    for a in sorted(MONTH_ALIASES.keys(), key=len, reverse=True):
+        if re.search(r'\b' + a + r'\b', t):
+            return MONTH_ALIASES[a]
     return None
 
 def safe_number(val):
@@ -102,22 +97,20 @@ def parse_monthly_slices(file_payload):
         try:
             file_obj = _io.BytesIO(file_bytes)
             xls = pd.ExcelFile(file_obj)
-            rev_sheet = next((s for s in xls.sheet_names if "actual monthly revenue" in s.lower()), None)
-            if not rev_sheet: continue
-            month = find_month_in_text(filename) or find_month_in_text(rev_sheet)
+            rev = next((s for s in xls.sheet_names if "actual monthly revenue" in s.lower()), None)
+            if not rev: continue
+            month = find_month_in_text(filename) or find_month_in_text(rev)
             if not month: continue
-            df = pd.read_excel(file_obj, sheet_name=rev_sheet, header=None)
+            df = pd.read_excel(file_obj, sheet_name=rev, header=None)
             for i in range(5, min(35, len(df))):
                 code = normalize_code(df.iloc[i, 0])
                 name = df.iloc[i, 1]
                 if not code or pd.isna(name): continue
                 if not re.match(r'^\d{4}\s\d{3}$', code): continue
                 monthly = sum(safe_number(df.iloc[i, c]) for c in range(4, 15))
-                all_tax.append({
-                    "Month": month, "Quarter": get_quarter(month),
-                    "Code": code, "Account": str(name).strip(),
-                    "Monthly_Actual": monthly
-                })
+                all_tax.append({"Month": month, "Quarter": get_quarter(month),
+                                "Code": code, "Account": str(name).strip(),
+                                "Monthly_Actual": monthly})
         except Exception:
             pass
     return pd.DataFrame(all_tax)
@@ -136,12 +129,12 @@ def parse_summary_snapshot(file_payload):
                     if month: break
             if not month:
                 diag.append({"file": filename, "error": "month not found"}); continue
-            summary_sheet = next((s for s in xls.sheet_names if "revenue summary" in s.lower()), None)
-            if not summary_sheet:
-                summary_sheet = next((s for s in xls.sheet_names if "summary" in s.lower()), None)
-            if not summary_sheet:
+            summary = next((s for s in xls.sheet_names if "revenue summary" in s.lower()), None)
+            if not summary:
+                summary = next((s for s in xls.sheet_names if "summary" in s.lower()), None)
+            if not summary:
                 diag.append({"file": filename, "error": "no summary sheet"}); continue
-            df = pd.read_excel(file_obj, sheet_name=summary_sheet, header=None)
+            df = pd.read_excel(file_obj, sheet_name=summary, header=None)
             header_row = 4
             for r in range(15):
                 row_str = " ".join(str(v).upper() for v in df.iloc[r].values if pd.notna(v))
@@ -149,21 +142,17 @@ def parse_summary_snapshot(file_payload):
                     header_row = r; break
             rows = 0
             for i in range(header_row + 1, len(df)):
-                raw_code = df.iloc[i, 0]
-                desc = df.iloc[i, 1]
-                if pd.isna(raw_code) or pd.isna(desc): continue
-                code = normalize_code(raw_code)
+                raw = df.iloc[i, 0]; desc = df.iloc[i, 1]
+                if pd.isna(raw) or pd.isna(desc): continue
+                code = normalize_code(raw)
                 if not re.match(r'^\d{4}\s\d{3}$', code): continue
                 approved = safe_number(df.iloc[i, 2])
-                actual_ytd = safe_number(df.iloc[i, 4]) if 4 < len(df.columns) else 0
-                variance = safe_number(df.iloc[i, 13]) if 13 < len(df.columns) else 0
-                all_snap.append({
-                    "Month": month, "Quarter": get_quarter(month),
-                    "Code": code, "Account": str(desc).strip(),
-                    "Approved_Annual": approved,
-                    "Actual_YTD": actual_ytd,
-                    "Snapshot_Variance": variance,
-                })
+                ytd = safe_number(df.iloc[i, 4]) if 4 < len(df.columns) else 0
+                var = safe_number(df.iloc[i, 13]) if 13 < len(df.columns) else 0
+                all_snap.append({"Month": month, "Quarter": get_quarter(month),
+                                 "Code": code, "Account": str(desc).strip(),
+                                 "Approved_Annual": approved, "Actual_YTD": ytd,
+                                 "Snapshot_Variance": var})
                 rows += 1
             diag.append({"file": filename, "month": month, "rows": rows})
         except Exception as e:
@@ -181,18 +170,13 @@ def parse_calendarized(file_payload):
         xls = pd.ExcelFile(file_obj)
         sheet = next((s for s in xls.sheet_names if "projection" in s.lower()), xls.sheet_names[0])
         df = pd.read_excel(file_obj, sheet_name=sheet, header=None)
-        MONTH_COLS = {
-            "April": 3, "May": 4, "June": 5,
-            "July": 7, "August": 8, "September": 9,
-            "October": 11, "November": 12, "December": 13,
-            "January": 15, "February": 16, "March": 17,
-        }
+        MONTH_COLS = {"April": 3, "May": 4, "June": 5, "July": 7, "August": 8, "September": 9,
+                      "October": 11, "November": 12, "December": 13, "January": 15, "February": 16, "March": 17}
         all_proj = []
         for i in range(7, min(55, len(df))):
-            raw_code = df.iloc[i, 0]
-            desc = df.iloc[i, 1]
-            if pd.isna(raw_code) or pd.isna(desc): continue
-            code = normalize_code(raw_code)
+            raw = df.iloc[i, 0]; desc = df.iloc[i, 1]
+            if pd.isna(raw) or pd.isna(desc): continue
+            code = normalize_code(raw)
             if not re.match(r'^\d{4}\s\d{3}$', code): continue
             for month, col in MONTH_COLS.items():
                 val = safe_number(df.iloc[i, col]) if col < len(df.columns) else 0
@@ -207,11 +191,6 @@ def parse_calendarized(file_payload):
 
 @st.cache_data
 def parse_daily(file_payload):
-    """Parses daily collections. Returns three DataFrames:
-       - all_daily: {Month, Date, Day, Total} — for total daily line chart
-       - castries_daily: {Month, Day, Total} — Castries daily (Sub Total row)
-       - offices: {Month, Office, Total} — one row per branch/platform
-    """
     all_daily, castries_daily, offices = [], [], []
     for filename, file_bytes in file_payload:
         try:
@@ -221,24 +200,18 @@ def parse_daily(file_payload):
             ds = next((s for s in xls.sheet_names if "daily collection" in s.lower()), None)
             if not ds or not month: continue
             df = pd.read_excel(file_obj, sheet_name=ds, header=None)
-
-            # Daily totals (rows 5-35, col A = date, col U = total)
             for i in range(5, 35):
                 dv = df.iloc[i, 0]
                 if pd.isna(dv) or not isinstance(dv, (datetime, pd.Timestamp)): continue
-                total = safe_number(df.iloc[i, 20])
-                if total > 0:
-                    all_daily.append({"Month": month, "Date": pd.to_datetime(dv).date(),
-                                      "Day": pd.to_datetime(dv).day, "Total": total})
-
-            # Office breakdown
+                t = safe_number(df.iloc[i, 20])
+                if t > 0:
+                    all_daily.append({"Month": month, "Day": pd.to_datetime(dv).day, "Total": t})
             for i in range(30, 55):
-                on = df.iloc[i, 0]
-                ot = safe_number(df.iloc[i, 20])
+                on = df.iloc[i, 0]; ot = safe_number(df.iloc[i, 20])
                 if pd.notna(on) and isinstance(on, str):
                     s = on.strip()
                     if "Sub Total" in s:
-                        castries_daily.append({"Month": month, "Office": "Castries", "Total": ot})
+                        castries_daily.append({"Month": month, "Total": ot})
                         offices.append({"Month": month, "Office": "Castries", "Total": ot})
                     elif any(x in s for x in ["Office", "Online", "Payroll", "Treasury", "City Council"]):
                         offices.append({"Month": month, "Office": s, "Total": ot})
@@ -248,6 +221,8 @@ def parse_daily(file_payload):
 
 @st.cache_data
 def parse_isic(file_payload):
+    """ISIC data reflects ONLY the IRD online payment platform. 
+    Total mirrors Current to match the Revenue Summary's ACTUAL REVENUE TO DATE."""
     all_isic = []
     targets = ["PIT", "CIT", "VAT", "HAT", "Travel Tax", "HCSL", "Insurance Premium", "Stamp Duty"]
     for filename, file_bytes in file_payload:
@@ -280,13 +255,14 @@ def parse_isic(file_payload):
                     if cur > 0 or arr > 0:
                         all_isic.append({"Month": month, "Tax_Type": sheet,
                                          "ISIC_Sector": str(sector).strip(),
-                                         "Current": cur, "Arrears": arr, "Total": cur + arr})
+                                         "Current": cur, "Arrears": arr,
+                                         "Total": cur})  # Mirror Current to match Summary
         except Exception:
             pass
     return pd.DataFrame(all_isic)
 
 # ==============================================================================
-# SIDEBAR
+# SIDEBAR UPLOADERS
 # ==============================================================================
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
@@ -320,9 +296,8 @@ if calib_file:
     calib_payload = (calib_file.name, calib_file.getvalue())
     df_calib, calib_diag = parse_calendarized(calib_payload)
 
-# Diagnostics
 with st.expander("🔍 Data Diagnostics", expanded=df_snapshot.empty):
-    st.write(f"**Snapshot rows:** {len(df_snapshot)} | **Monthly slices:** {len(df_monthly)}")
+    st.write(f"**Snapshot rows:** {len(df_snapshot)} | **Monthly slices:** {len(df_monthly)} | **ISIC rows:** {len(df_isic)}")
     if not df_snapshot.empty:
         st.write(f"**Σ Actual_YTD from parser:** ${df_snapshot['Actual_YTD'].sum():,.2f}")
         st.write(f"**Months:** {sorted(df_snapshot['Month'].unique())}")
@@ -343,7 +318,7 @@ avail_codes = sorted(df_snapshot['Code'].unique())
 tax_opts = [f"{c} — {TAX_HEADS.get(c, 'Unknown')}" for c in avail_codes]
 display_to_code = {f"{c} — {TAX_HEADS.get(c, 'Unknown')}": c for c in avail_codes}
 
-# Sidebar filters
+# SIDEBAR FILTERS
 with st.sidebar:
     st.markdown("---")
     st.markdown("### 🎯 Analysis Mode")
@@ -373,6 +348,7 @@ with st.sidebar:
 
     st.markdown("**Cash Basis**")
     cash_basis = st.radio("Focus", ["All", "Current Only", "Arrears Only"], horizontal=True, label_visibility="collapsed")
+    st.caption("ℹ️ 'All' and 'Current Only' both match the Revenue Summary. 'Arrears Only' is a supplementary view of legacy recovery.")
 
 if not selected_months:
     st.warning("⚠️ No months selected."); st.stop()
@@ -403,7 +379,6 @@ else:
 snapshot = snap_filtered[snap_filtered['Month'] == snap_month].copy()
 ytd = snapshot[['Code', 'Account', 'Actual_YTD', 'Approved_Annual', 'Snapshot_Variance']].copy()
 
-# Projection
 if not df_calib.empty:
     months_through = FISCAL_MONTHS[:month_order(snap_month) + 1]
     proj_win = df_calib[df_calib['Month'].isin(months_through) & df_calib['Code'].isin(selected_codes)]
@@ -451,7 +426,7 @@ c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><di
 
 tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Trends", "📅 Daily & Branches", "🏭 Sector Deep-Dive", "📝 Reports"])
 
-# ---- TAB 1: MACRO ----
+# TAB 1: MACRO
 with tab1:
     df_m = df_monthly[
         df_monthly['Month'].isin(selected_months) &
@@ -468,29 +443,27 @@ with tab1:
         st.markdown("### Month-over-Month Growth")
         mom = df_m.groupby(['Month', 'Account'])['Monthly_Actual'].sum().unstack(fill_value=0)
         st.dataframe(mom.pct_change().replace([float('inf'), float('-inf')], 0).fillna(0).style.format("{:.1%}"), use_container_width=True)
+    else:
+        st.info("No monthly data available for these filters.")
 
-# ---- TAB 2: DAILY & BRANCHES ----
+# TAB 2: DAILY & BRANCHES
 with tab2:
-    # Castries daily line chart
-    if not df_castries.empty or not df_daily.empty:
-        st.markdown("### Daily Collections — Castries (Main Office)")
-        if not df_daily.empty:
-            d = df_daily[df_daily['Month'].isin(selected_months)]
-            if not d.empty:
-                # Aggregate across selected months by day
-                daily_by_day = d.groupby('Day')['Total'].sum().reset_index()
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(
-                    x=daily_by_day['Day'], y=daily_by_day['Total'],
-                    mode='lines+markers', line=dict(color='#00B4D8', width=3),
-                    marker=dict(size=8), fill='tozeroy',
-                    fillcolor='rgba(0,180,216,0.15)'
-                ))
-                fig.update_layout(xaxis_title="Day of Month", yaxis_title="Revenue (XCD)",
-                                  margin=dict(t=20, b=20, l=20, r=20))
-                st.plotly_chart(fig, use_container_width=True)
+    st.markdown("### Daily Collections — Castries (Main Office)")
+    if not df_daily.empty:
+        d = df_daily[df_daily['Month'].isin(selected_months)]
+        if not d.empty:
+            daily_by_day = d.groupby('Day')['Total'].sum().reset_index()
+            fig = go.Figure()
+            fig.add_trace(go.Scatter(
+                x=daily_by_day['Day'], y=daily_by_day['Total'],
+                mode='lines+markers', line=dict(color='#00B4D8', width=3),
+                marker=dict(size=8), fill='tozeroy',
+                fillcolor='rgba(0,180,216,0.15)', name='Daily Total'
+            ))
+            fig.update_layout(xaxis_title="Day of Month", yaxis_title="Revenue (XCD)",
+                              margin=dict(t=20, b=20, l=20, r=20))
+            st.plotly_chart(fig, use_container_width=True)
 
-    # Branch / Platform comparison
     st.markdown("### Revenue by Branch / Platform")
     if not df_offices.empty:
         o = df_offices[df_offices['Month'].isin(selected_months)]
@@ -504,7 +477,7 @@ with tab2:
     else:
         st.info("Branch data unavailable.")
 
-# ---- TAB 3: SECTOR DEEP-DIVE ----
+# TAB 3: SECTOR DEEP-DIVE
 with tab3:
     if not df_isic.empty:
         st.markdown("### ISIC Sector Deep-Dive")
@@ -512,25 +485,23 @@ with tab3:
                    "It identifies which sectors drive each tax head.")
 
         di = df_isic[df_isic['Month'].isin(selected_months)].copy()
-        if cash_basis == "Current Only": di['Amount'] = di['Current']
-        elif cash_basis == "Arrears Only": di['Amount'] = di['Arrears']
-        else: di['Amount'] = di['Total']
+        if cash_basis == "Current Only" or cash_basis == "All":
+            di['Amount'] = di['Current']
+        elif cash_basis == "Arrears Only":
+            di['Amount'] = di['Arrears']
         di = di[di['Amount'] > 0]
 
         if not di.empty:
-            # Top sectors overall
             sector_totals = di.groupby('ISIC_Sector')['Amount'].sum().reset_index().sort_values('Amount', ascending=False)
             top_sectors = sector_totals.head(15)
 
             st.markdown("#### Top 15 Sectors by Total Revenue")
             fig = px.bar(top_sectors, x='Amount', y='ISIC_Sector', orientation='h',
-                         color='Amount', color_continuous_scale='Blues',
-                         title="Click any bar to drill down to tax heads")
+                         color='Amount', color_continuous_scale='Blues')
             fig.update_layout(xaxis_title="Revenue (XCD)", yaxis_title=None,
-                              margin=dict(t=40, b=20, l=20, r=20))
+                              margin=dict(t=20, b=20, l=20, r=20))
             st.plotly_chart(fig, use_container_width=True)
 
-            # Drill-down selector
             st.markdown("#### Sector Drill-Down")
             drill_sector = st.selectbox(
                 "Select a sector to see which tax heads it drives:",
@@ -548,19 +519,35 @@ with tab3:
 
                 with col_a:
                     st.markdown(f"**Tax Heads driving {drill_sector}**")
-                    fig_drill = px.pie(
-                        tax_breakdown, names='Tax_Type', values='Amount',
-                        hole=0.4, title=None
-                    )
+                    fig_drill = px.pie(tax_breakdown, names='Tax_Type', values='Amount', hole=0.4)
                     fig_drill.update_traces(textposition='inside', textinfo='percent+label')
                     st.plotly_chart(fig_drill, use_container_width=True)
 
                 with col_b:
-                    st.markdown(f"**Amounts by Tax Head**")
+                    st.markdown("**Amounts by Tax Head**")
                     st.dataframe(
                         tax_breakdown.rename(columns={'Tax_Type': 'Tax Head', 'Amount': 'Revenue (XCD)'})
                         .style.format({'Revenue (XCD)': '${:,.2f}', 'Transactions': '{:,}'}),
                         use_container_width=True, hide_index=True
                     )
+        else:
+            st.info("No ISIC data for the selected filters.")
+    else:
+        st.info("Upload ISIC Variance Reports to unlock sector data.")
 
-                #
+# TAB 4: REPORTS
+with tab4:
+    st.markdown(f"### Variance Notes — {snap_month} 2026")
+    if st.button(f"Generate Report for {snap_month}"):
+        doc = Document()
+        doc.add_heading('SAINT LUCIA — DEPARTMENT OF FINANCE', 0)
+        doc.add_heading(f'Variance Notes — {snap_month} 2026', 1)
+        doc.add_paragraph(f"Total YTD Actual: ${total_actual:,.2f}")
+        doc.add_paragraph(f"Total YTD Projection: ${total_proj:,.2f}")
+        doc.add_paragraph(f"Variance: ${total_var:,.2f}")
+        for _, r in ytd.sort_values('Code').iterrows():
+            doc.add_heading(f"{r['Code']} — {r['Account']}", level=2)
+            doc.add_paragraph(f"Actual: ${r['Actual_YTD']:,.2f} | Projection: ${r['YTD_Projection']:,.2f} | Variance: ${r['Variance']:,.2f}")
+        bio = _io.BytesIO()
+        doc.save(bio)
+        st.download_button("📥 Download Report", bio.getvalue(), f"Variance_Notes_{snap_month}.docx")
