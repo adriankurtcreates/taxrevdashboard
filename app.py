@@ -9,9 +9,6 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# ==============================================================================
-# PAGE CONFIG & CSS
-# ==============================================================================
 st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
 
 st.markdown("""
@@ -28,9 +25,6 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# CONSTANTS
-# ==============================================================================
 FISCAL_MONTHS = ["April", "May", "June", "July", "August", "September",
                  "October", "November", "December", "January", "February", "March"]
 MONTH_ALIASES = {
@@ -54,9 +48,6 @@ TAX_HEADS = {
 CODE_ALIASES = {"362 - 011": "3422 008", "362-011": "3422 008", "362 011": "3422 008"}
 QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2", "December": "Q3", "March": "Q4"}
 
-# ==============================================================================
-# HELPERS
-# ==============================================================================
 def normalize_code(code):
     if pd.isna(code): return ""
     n = re.sub(r'\s+', ' ', str(code).strip())
@@ -110,9 +101,6 @@ def get_fiscal_context(month):
         pos = {"January": "first", "February": "second", "March": "third"}.get(month, "")
         return f"This month represents the {pos} month of the 4th quarter of the fiscal year."
 
-# ==============================================================================
-# PARSERS
-# ==============================================================================
 @st.cache_data
 def parse_monthly_slices(file_payload):
     all_tax = []
@@ -281,18 +269,13 @@ def parse_isic(file_payload):
         except Exception:
             pass
     return pd.DataFrame(all_isic)
-
-# ==============================================================================
-# VARIANCE NOTES DOCX GENERATOR
-# ==============================================================================
-def generate_tax_paragraph(actual, projection, variance):
+    def generate_tax_paragraph(actual, projection, variance):
     if projection > 0:
         pct = (variance / projection) * 100
     else:
         pct = 0.0
     var_str = fmt_currency(variance)
     pct_str = fmt_pct(pct)
-
     if variance == 0:
         return (f"Actual collections of {fmt_currency(actual)} matched the projected figure "
                 f"of {fmt_currency(projection)}. There is no variance to report.")
@@ -307,7 +290,6 @@ def generate_tax_paragraph(actual, projection, variance):
 
 def build_variance_notes_docx(snap_month, total_actual, total_projection, total_variance, ytd_df, df_isic):
     doc = Document()
-    # Header
     h = doc.add_heading('SAINT LUCIA', 0); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     h = doc.add_heading('DEPARTMENT OF FINANCE', 1); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     h = doc.add_heading('INLAND REVENUE DEPARTMENT', 1); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -318,7 +300,6 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
     p.runs[0].bold = True
     p.runs[0].font.size = Pt(14)
 
-    # Overview
     doc.add_heading('Overview', level=1)
     direction = "an overage" if total_variance >= 0 else "a shortfall"
     pct_total = (total_variance / total_projection) * 100 if total_projection > 0 else 0
@@ -335,7 +316,6 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
         f"of performance across individual tax heads is presented in the Variance Analysis section below."
     )
 
-    # Variance Analysis
     doc.add_heading('Variance Analysis by Tax Type', level=1)
     doc.add_paragraph("The performances by individual tax type are outlined below:")
 
@@ -350,7 +330,6 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
         p = doc.add_paragraph(line); p.runs[0].bold = True
         doc.add_paragraph(generate_tax_paragraph(actual, projection, variance))
 
-        # Special rules
         if code == "3131 001":
             doc.add_paragraph("Note: Due to the ongoing moratorium on residential property tax, current "
                               "payments apply exclusively to commercial properties. Arrears collections "
@@ -373,7 +352,6 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
                               "are minimal and result primarily from the waiver of interest, penalties, "
                               "and fees.")
 
-        # Top sectors
         if df_isic is not None and not df_isic.empty:
             prefix_map = {"3111": "PIT", "3112": "CIT", "3113": "Withholding", "3131": "Property Tax",
                           "3141 001": "VAT", "3141 004": "HAT", "3141 005": "Travel Tax",
@@ -396,7 +374,6 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
                         "possibilities will have to be made."
                     )
 
-    # Conclusion
     doc.add_heading('Conclusion', level=1)
     verdict = "positive at the aggregate level" if total_variance >= 0 else "negative at the aggregate level"
     doc.add_paragraph(f"The Inland Revenue Department's performance for {snap_month} 2026 produced a "
@@ -417,20 +394,13 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
     bio = _io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
-
-# ==============================================================================
-# SIDEBAR
-# ==============================================================================
-with st.sidebar:
+    with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
     st.title("Revenue Analysis")
     main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
     isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
     calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
 
-# ==============================================================================
-# MAIN
-# ==============================================================================
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
 if not main_files:
@@ -575,4 +545,4 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 c1, c2, c3 = st.columns(3)
-c1.markdown(f'<div class="kpi-card"><div class="kpi-title
+c1.markdown
