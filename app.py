@@ -395,11 +395,11 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
     doc.save(bio)
     return bio.getvalue()
     with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
-    st.title("Revenue Analysis")
-    main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
-    isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
-    calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
+        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
+        st.title("Revenue Analysis")
+        main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
+        isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
+        calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
 
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
