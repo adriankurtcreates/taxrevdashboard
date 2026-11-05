@@ -100,7 +100,6 @@ def get_fiscal_context(month):
     else:
         pos = {"January": "first", "February": "second", "March": "third"}.get(month, "")
         return f"This month represents the {pos} month of the 4th quarter of the fiscal year."
-
 @st.cache_data
 def parse_monthly_slices(file_payload):
     all_tax = []
@@ -169,7 +168,6 @@ def parse_summary_snapshot(file_payload):
         except Exception as e:
             diag.append({"file": filename, "error": str(e)})
     return pd.DataFrame(all_snap), pd.DataFrame(diag)
-
 @st.cache_data
 def parse_calendarized(file_payload):
     if not file_payload:
@@ -269,24 +267,24 @@ def parse_isic(file_payload):
         except Exception:
             pass
     return pd.DataFrame(all_isic)
-    def generate_tax_paragraph(actual, projection, variance):
-        if projection > 0:
-            pct = (variance / projection) * 100
-        else:
-            pct = 0.0
-        var_str = fmt_currency(variance)
-        pct_str = fmt_pct(pct)
-        if variance == 0:
-            return (f"Actual collections of {fmt_currency(actual)} matched the projected figure "
-                    f"of {fmt_currency(projection)}. There is no variance to report.")
-        direction = "exceeded" if variance > 0 else "fell short of"
-        size = "an overage" if variance > 0 else "a shortfall"
-        sentence = (f"Actual collections of {fmt_currency(actual)} {direction} the projected figure "
-                    f"of {fmt_currency(projection)}, representing {size} of {var_str} or {pct_str}. ")
-        if projection > 0:
-            rate = (actual / projection) * 100
-            sentence += f"This corresponds to a collection rate of {rate:.2f}% of the projection for the period."
-        return sentence
+def generate_tax_paragraph(actual, projection, variance):
+    if projection > 0:
+        pct = (variance / projection) * 100
+    else:
+        pct = 0.0
+    var_str = fmt_currency(variance)
+    pct_str = fmt_pct(pct)
+    if variance == 0:
+        return (f"Actual collections of {fmt_currency(actual)} matched the projected figure "
+                f"of {fmt_currency(projection)}. There is no variance to report.")
+    direction = "exceeded" if variance > 0 else "fell short of"
+    size = "an overage" if variance > 0 else "a shortfall"
+    sentence = (f"Actual collections of {fmt_currency(actual)} {direction} the projected figure "
+                f"of {fmt_currency(projection)}, representing {size} of {var_str} or {pct_str}. ")
+    if projection > 0:
+        rate = (actual / projection) * 100
+        sentence += f"This corresponds to a collection rate of {rate:.2f}% of the projection for the period."
+    return sentence
 
 def build_variance_notes_docx(snap_month, total_actual, total_projection, total_variance, ytd_df, df_isic):
     doc = Document()
@@ -394,12 +392,12 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
     bio = _io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
-    with st.sidebar:
-        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
-        st.title("Revenue Analysis")
-        main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
-        isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
-        calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
+    st.title("Revenue Analysis")
+    main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
+    isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
+    calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
 
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
