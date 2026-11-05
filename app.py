@@ -421,7 +421,10 @@ for p in DATA_DIR.glob("*.xlsx") if DATA_DIR.exists() else []:
     # Skip files that are clearly ISIC or projections
     if "isic" in name_lower or "projection" in name_lower:
         continue
-    if "monthly revenue" in name_lower or "revenue collection" in name_lower:
+    # Match any file containing "revenue report", "monthly revenue", or "revenue collection"
+    if ("revenue report" in name_lower or 
+        "monthly revenue" in name_lower or 
+        "revenue collection" in name_lower):
         main_files_on_disk.append(p)
 
 isic_files_on_disk = [p for p in (DATA_DIR.glob("*.xlsx") if DATA_DIR.exists() else [])
