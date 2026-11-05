@@ -98,17 +98,17 @@ def fmt_pct(val):
 def get_fiscal_context(month):
     q = get_quarter(month)
     if q == "Q1 (Apr-Jun)":
-        m_pos = {"April": "first", "May": "second", "June": "third"}.get(month, "")
-        return f"This month represents the {m_pos} month of the 1st quarter of the fiscal year."
+        pos = {"April": "first", "May": "second", "June": "third"}.get(month, "")
+        return f"This month represents the {pos} month of the 1st quarter of the fiscal year."
     elif q == "Q2 (Jul-Sep)":
-        m_pos = {"July": "first", "August": "second", "September": "third"}.get(month, "")
-        return f"This month represents the {m_pos} month of the 2nd quarter of the fiscal year."
+        pos = {"July": "first", "August": "second", "September": "third"}.get(month, "")
+        return f"This month represents the {pos} month of the 2nd quarter of the fiscal year."
     elif q == "Q3 (Oct-Dec)":
-        m_pos = {"October": "first", "November": "second", "December": "third"}.get(month, "")
-        return f"This month represents the {m_pos} month of the 3rd quarter of the fiscal year."
+        pos = {"October": "first", "November": "second", "December": "third"}.get(month, "")
+        return f"This month represents the {pos} month of the 3rd quarter of the fiscal year."
     else:
-        m_pos = {"January": "first", "February": "second", "March": "third"}.get(month, "")
-        return f"This month represents the {m_pos} month of the 4th quarter of the fiscal year."
+        pos = {"January": "first", "February": "second", "March": "third"}.get(month, "")
+        return f"This month represents the {pos} month of the 4th quarter of the fiscal year."
 
 # ==============================================================================
 # PARSERS
@@ -283,46 +283,34 @@ def parse_isic(file_payload):
     return pd.DataFrame(all_isic)
 
 # ==============================================================================
-# VARIANCE NOTES DOCX GENERATOR (STRICT TEMPLATE)
+# VARIANCE NOTES DOCX GENERATOR
 # ==============================================================================
-def generate_tax_paragraph(code, account, actual, projection, variance):
+def generate_tax_paragraph(actual, projection, variance):
     if projection > 0:
         pct = (variance / projection) * 100
     else:
         pct = 0.0
-
     var_str = fmt_currency(variance)
     pct_str = fmt_pct(pct)
 
     if variance == 0:
-        return f"Actual collections of {fmt_currency(actual)} matched the projected figure of {fmt_currency(projection)}. There is no variance to report."
-    
-    if variance > 0:
-        direction = "exceeded"
-        size = "an overage"
-    else:
-        direction = "fell short of"
-        size = "a shortfall"
-
-    sentence = (
-        f"Actual collections of {fmt_currency(actual)} {direction} the projected figure of "
-        f"{fmt_currency(projection)}, representing {size} of {var_str} or {pct_str}. "
-    )
+        return (f"Actual collections of {fmt_currency(actual)} matched the projected figure "
+                f"of {fmt_currency(projection)}. There is no variance to report.")
+    direction = "exceeded" if variance > 0 else "fell short of"
+    size = "an overage" if variance > 0 else "a shortfall"
+    sentence = (f"Actual collections of {fmt_currency(actual)} {direction} the projected figure "
+                f"of {fmt_currency(projection)}, representing {size} of {var_str} or {pct_str}. ")
     if projection > 0:
         rate = (actual / projection) * 100
         sentence += f"This corresponds to a collection rate of {rate:.2f}% of the projection for the period."
     return sentence
 
-def build_variance_notes_docx(
-    snap_month, total_actual, total_projection, total_variance, ytd_df, df_isic
-):
+def build_variance_notes_docx(snap_month, total_actual, total_projection, total_variance, ytd_df, df_isic):
     doc = Document()
-
-    # --- HEADER ---
+    # Header
     h = doc.add_heading('SAINT LUCIA', 0); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     h = doc.add_heading('DEPARTMENT OF FINANCE', 1); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
     h = doc.add_heading('INLAND REVENUE DEPARTMENT', 1); h.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    
     p = doc.add_paragraph('Revenue Collection Volume 14: Monthly Performance Report')
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p = doc.add_paragraph(f'Explanation of Variances for the Month of {snap_month} 2026')
@@ -330,97 +318,70 @@ def build_variance_notes_docx(
     p.runs[0].bold = True
     p.runs[0].font.size = Pt(14)
 
-    # --- OVERVIEW ---
+    # Overview
     doc.add_heading('Overview', level=1)
-    
     direction = "an overage" if total_variance >= 0 else "a shortfall"
     pct_total = (total_variance / total_projection) * 100 if total_projection > 0 else 0
-
-    overview_text = (
-        f"For the month of {snap_month} 2026, the Inland Revenue Department projected total revenue "
-        f"of {fmt_currency(total_projection)}. Actual collections amounted to {fmt_currency(total_actual)}, "
-        f"resulting in {direction} of {fmt_currency(abs(total_variance))} or {fmt_pct(abs(pct_total))} "
-        f"{'above' if total_variance >= 0 else 'below'} projection. "
-    )
+    overview_text = (f"For the month of {snap_month} 2026, the Inland Revenue Department projected "
+                     f"total revenue of {fmt_currency(total_projection)}. Actual collections amounted "
+                     f"to {fmt_currency(total_actual)}, resulting in {direction} of "
+                     f"{fmt_currency(abs(total_variance))} or {fmt_pct(abs(pct_total))} "
+                     f"{'above' if total_variance >= 0 else 'below'} projection.")
     doc.add_paragraph(overview_text)
-    
     doc.add_paragraph(get_fiscal_context(snap_month))
-    
-    # Placeholder for the general narrative
-    narrative = (
-        f"The aggregate performance for {snap_month} shows {'positive' if total_variance >= 0 else 'negative'} "
-        f"net variance. The detailed distribution of performance across individual tax heads is presented in the Variance Analysis section below."
+    doc.add_paragraph(
+        f"The aggregate performance for {snap_month} shows "
+        f"{'positive' if total_variance >= 0 else 'negative'} net variance. The detailed distribution "
+        f"of performance across individual tax heads is presented in the Variance Analysis section below."
     )
-    doc.add_paragraph(narrative)
 
-    # --- VARIANCE ANALYSIS ---
+    # Variance Analysis
     doc.add_heading('Variance Analysis by Tax Type', level=1)
     doc.add_paragraph("The performances by individual tax type are outlined below:")
 
     for _, row in ytd_df.sort_values('Code').iterrows():
-        code = row['Code']
-        account = row['Account']
-        actual = row['Actual_YTD']
-        projection = row['YTD_Projection']
-        variance = row['Variance']
+        code = row['Code']; account = row['Account']
+        actual = row['Actual_YTD']; projection = row['YTD_Projection']; variance = row['Variance']
         pct = (variance / projection * 100) if projection > 0 else 0.0
 
-        # Heading
         doc.add_heading(f"{code} - {account}", level=2)
-        
-        # Projection/Actual/Variance Line
-        var_str = fmt_currency(variance)
-        pct_str = fmt_pct(pct)
-        line = f"Projection: {fmt_currency(projection)} | Actual: {fmt_currency(actual)} | Variance: {var_str} ({pct_str})"
-        p = doc.add_paragraph(line)
-        p.runs[0].bold = True
+        line = (f"Projection: {fmt_currency(projection)} | Actual: {fmt_currency(actual)} | "
+                f"Variance: {fmt_currency(variance)} ({fmt_pct(pct)})")
+        p = doc.add_paragraph(line); p.runs[0].bold = True
+        doc.add_paragraph(generate_tax_paragraph(actual, projection, variance))
 
-        # Analytical Paragraph
-        doc.add_paragraph(generate_tax_paragraph(code, account, actual, projection, variance))
-
-        # Special Rules
-        if code == "3111 001":
-            doc.add_paragraph("Note: This tax head includes Personal Income Tax, Contract Tax, and PAYE.")
-        elif code == "3131 001":
-            doc.add_paragraph(
-                "Note: Due to the ongoing moratorium on residential property tax, current payments "
-                "apply exclusively to commercial properties. Arrears collections apply to both."
-            )
+        # Special rules
+        if code == "3131 001":
+            doc.add_paragraph("Note: Due to the ongoing moratorium on residential property tax, current "
+                              "payments apply exclusively to commercial properties. Arrears collections "
+                              "apply to both.")
         elif code == "3141 004":
-            doc.add_paragraph(
-                "Note: Do not label this tax as obsolete. The Hotel Accommodation Tax remains an active "
-                "registry line for the collection and settlement of legacy arrears, which accounts for "
-                "ongoing revenue despite no active monthly projections."
-            )
+            doc.add_paragraph("Note: The Hotel Accommodation Tax remains an active registry line for the "
+                              "collection and settlement of legacy arrears, accounting for ongoing revenue "
+                              "despite no active monthly projections.")
         elif code == "3141 006":
-            doc.add_paragraph(
-                "Note: The Health and Citizen Security Levy (HCSL) was implemented in March 2023. "
-                "Therefore, no historical data exists prior to that date for trend comparison."
-            )
+            doc.add_paragraph("Note: The Health and Citizen Security Levy (HCSL) was implemented in March "
+                              "2023; no historical data exists prior to that date.")
         elif code == "3142 006":
-            doc.add_paragraph(
-                "Structural Insight: The top-performing sectors listed for Stamp Duty may not be a true "
-                "indicator of which economic sectors are generating the underlying transactions. This is "
-                "because the ISIC code used to log the payment is routinely assigned to the law firm or "
-                "legal practitioner paying the tax on behalf of their clients."
-            )
+            doc.add_paragraph("Structural Insight: The top-performing sectors listed for Stamp Duty may not "
+                              "be a true indicator of which economic sectors are generating the underlying "
+                              "transactions. This is because the ISIC code used to log the payment is "
+                              "routinely assigned to the law firm or legal practitioner paying the tax on "
+                              "behalf of their clients.")
         elif code == "3422 008":
-            doc.add_paragraph(
-                "Note: Due to the active Amnesty extending to December 2027, collections are minimal and "
-                "result primarily from the waiver of interest, penalties, and fees."
-            )
+            doc.add_paragraph("Note: Due to the active Amnesty extending to December 2027, collections "
+                              "are minimal and result primarily from the waiver of interest, penalties, "
+                              "and fees.")
 
-        # Top Performing Sectors
+        # Top sectors
         if df_isic is not None and not df_isic.empty:
-            sheet_prefix = None
             prefix_map = {"3111": "PIT", "3112": "CIT", "3113": "Withholding", "3131": "Property Tax",
-                          "3141 001": "VAT", "3141 004": "HAT", "3141 005": "Travel Tax", "3141 006": "HCSL",
-                          "3142 005": "Insurance Premium", "3142 006": "Stamp Duty"}
+                          "3141 001": "VAT", "3141 004": "HAT", "3141 005": "Travel Tax",
+                          "3141 006": "HCSL", "3142 005": "Insurance Premium", "3142 006": "Stamp Duty"}
+            sheet_prefix = None
             for prefix, sheet in prefix_map.items():
                 if code.startswith(prefix):
-                    sheet_prefix = sheet
-                    break
-            
+                    sheet_prefix = sheet; break
             if sheet_prefix:
                 filtered = df_isic[df_isic['Tax_Type'].str.contains(sheet_prefix, case=False, na=False)]
                 filtered = filtered[filtered['Month'] == snap_month]
@@ -429,36 +390,24 @@ def build_variance_notes_docx(
                     doc.add_heading('Top Performing Sectors', level=3)
                     for sector, amount in top3.items():
                         doc.add_paragraph(f"{sector}: {fmt_currency(amount)}", style='List Bullet')
-                    
-                    # Required closing phrase
                     doc.add_paragraph(
-                        "These sectors accounted for the largest share of sector-attributed collections "
-                        "for the reporting period. Further observation of these possibilities will have to be made."
+                        "These sectors accounted for the largest share of sector-attributed "
+                        "collections for the reporting period. Further observation of these "
+                        "possibilities will have to be made."
                     )
 
-    # --- CONCLUSION ---
+    # Conclusion
     doc.add_heading('Conclusion', level=1)
-    
-    if total_variance >= 0:
-        verdict = "positive at the aggregate level"
-    else:
-        verdict = "negative at the aggregate level"
-
-    conclusion_text = (
-        f"The Inland Revenue Department's performance for {snap_month} 2026 produced a net variance "
-        f"of {fmt_currency(total_variance)} ({fmt_pct(pct_total)}), which is {verdict}. "
-    )
-    doc.add_paragraph(conclusion_text)
-    
+    verdict = "positive at the aggregate level" if total_variance >= 0 else "negative at the aggregate level"
+    doc.add_paragraph(f"The Inland Revenue Department's performance for {snap_month} 2026 produced a "
+                      f"net variance of {fmt_currency(total_variance)} ({fmt_pct(pct_total)}), "
+                      f"which is {verdict}.")
     if not ytd_df.empty:
         top = ytd_df.nlargest(1, 'Variance').iloc[0]
         bottom = ytd_df.nsmallest(1, 'Variance').iloc[0]
-        doc.add_paragraph(
-            f"The largest positive variance was recorded in {top['Account']} "
-            f"({fmt_currency(top['Variance'])}). The largest negative variance was recorded in "
-            f"{bottom['Account']} ({fmt_currency(bottom['Variance'])})."
-        )
-        
+        doc.add_paragraph(f"The largest positive variance was recorded in {top['Account']} "
+                          f"({fmt_currency(top['Variance'])}). The largest negative variance was "
+                          f"recorded in {bottom['Account']} ({fmt_currency(bottom['Variance'])}).")
     doc.add_paragraph(
         "These variances reflect the current collection status against the calendarized projections. "
         "The Department will continue to monitor these streams to assess whether the observed variances "
@@ -470,23 +419,160 @@ def build_variance_notes_docx(
     return bio.getvalue()
 
 # ==============================================================================
-# SIDEBAR & MAIN RENDERING (SAME AS PREVIOUS)
+# SIDEBAR
 # ==============================================================================
-# ... [Keep the same sidebar uploaders, diagnostics, filters, KPI cards, and tabs 1-3 as the previous code] ...
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
+    st.title("Revenue Analysis")
+    main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
+    isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
+    calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
 
-# TAB 4: REPORTS
-with tab4:
-    st.markdown(f"### Variance Notes — {snap_month} 2026")
-    st.caption("Generates the IMF-style Word document using the strict Master Prompt template.")
-    
-    if st.button(f"Generate Report for {snap_month}"):
-        with st.spinner("Generating Word document..."):
-            docx_bytes = build_variance_notes_docx(
-                snap_month, total_actual, total_proj, total_var, ytd, df_isic
-            )
-            st.download_button(
-                label="📥 Download Variance Notes (.docx)",
-                data=docx_bytes,
-                file_name=f"Variance_Notes_{snap_month}_2026.docx",
-                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            )
+# ==============================================================================
+# MAIN
+# ==============================================================================
+st.title("🇱🇨 Revenue Intelligence Dashboard")
+
+if not main_files:
+    st.info("👈 Upload your Monthly Revenue Reports in the sidebar to begin.")
+    st.stop()
+
+main_payload = [(f.name, f.getvalue()) for f in main_files]
+df_monthly = parse_monthly_slices(main_payload)
+df_snapshot, diag_snap = parse_summary_snapshot(main_payload)
+df_daily, df_castries, df_offices = parse_daily(main_payload)
+
+df_isic = pd.DataFrame()
+if isic_files:
+    isic_payload = [(f.name, f.getvalue()) for f in isic_files]
+    df_isic = parse_isic(isic_payload)
+
+df_calib = pd.DataFrame()
+calib_diag = {}
+if calib_file:
+    calib_payload = (calib_file.name, calib_file.getvalue())
+    df_calib, calib_diag = parse_calendarized(calib_payload)
+
+with st.expander("🔍 Data Diagnostics", expanded=df_snapshot.empty):
+    st.write(f"**Snapshot rows:** {len(df_snapshot)} | **Monthly slices:** {len(df_monthly)} | **ISIC rows:** {len(df_isic)}")
+    if not df_snapshot.empty:
+        st.write(f"**Σ Actual_YTD from parser:** ${df_snapshot['Actual_YTD'].sum():,.2f}")
+        st.write(f"**Months:** {sorted(df_snapshot['Month'].unique())}")
+    st.dataframe(diag_snap, use_container_width=True)
+    if calib_file:
+        if calib_diag.get("error"):
+            st.error(f"Projections error: {calib_diag['error']}")
+        else:
+            st.success(f"✓ Projections loaded: {calib_diag['rows_parsed']} rows")
+
+if df_snapshot.empty:
+    st.error("No snapshot rows parsed."); st.stop()
+
+avail_months = sorted(df_snapshot['Month'].unique(), key=month_order)
+avail_quarters = sorted(df_snapshot['Quarter'].unique())
+avail_codes = sorted(df_snapshot['Code'].unique())
+tax_opts = [f"{c} — {TAX_HEADS.get(c, 'Unknown')}" for c in avail_codes]
+display_to_code = {f"{c} — {TAX_HEADS.get(c, 'Unknown')}": c for c in avail_codes}
+
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 🎯 Analysis Mode")
+    analysis_mode = st.radio("Snapshot driver",
+                             ["YTD (Latest Summary)", "Quarter-End Snapshot", "Month Snapshot"],
+                             label_visibility="collapsed")
+    st.markdown("---")
+    st.markdown("### 🎛️ Filters")
+
+    st.markdown("**Month**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="m_all", use_container_width=True): st.session_state["month_f"] = avail_months
+    if c2.button("None", key="m_none", use_container_width=True): st.session_state["month_f"] = []
+    selected_months = st.multiselect("Months", avail_months, default=avail_months, key="month_f", label_visibility="collapsed")
+
+    st.markdown("**Quarter**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="q_all", use_container_width=True): st.session_state["qtr_f"] = avail_quarters
+    if c2.button("None", key="q_none", use_container_width=True): st.session_state["qtr_f"] = []
+    selected_quarters = st.multiselect("Quarters", avail_quarters, default=avail_quarters, key="qtr_f", label_visibility="collapsed")
+
+    st.markdown("**Tax Head**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="t_all", use_container_width=True): st.session_state["tax_f"] = tax_opts
+    if c2.button("None", key="t_none", use_container_width=True): st.session_state["tax_f"] = []
+    selected_taxes = st.multiselect("Tax Heads", tax_opts, default=tax_opts, key="tax_f", label_visibility="collapsed")
+
+    st.markdown("**Cash Basis**")
+    cash_basis = st.radio("Focus", ["All", "Current Only", "Arrears Only"], horizontal=True, label_visibility="collapsed")
+    st.caption("ℹ️ 'All' and 'Current Only' both match the Revenue Summary.")
+
+if not selected_months:
+    st.warning("⚠️ No months selected."); st.stop()
+if not selected_quarters:
+    st.warning("⚠️ No quarters selected."); st.stop()
+if not selected_taxes:
+    st.warning("⚠️ No tax heads selected."); st.stop()
+
+selected_codes = [display_to_code[d] for d in selected_taxes if d in display_to_code]
+
+snap_filtered = df_snapshot[
+    df_snapshot['Month'].isin(selected_months) &
+    df_snapshot['Quarter'].isin(selected_quarters) &
+    df_snapshot['Code'].isin(selected_codes)
+].copy()
+
+if snap_filtered.empty:
+    st.error("Filters produced 0 snapshot rows."); st.stop()
+
+if analysis_mode == "Quarter-End Snapshot":
+    qe_avail = [m for m in snap_filtered['Month'].unique() if m in QUARTER_END_MONTHS]
+    if not qe_avail:
+        st.error("No quarter-end snapshot available."); st.stop()
+    snap_month = sorted(qe_avail, key=month_order)[-1]
+else:
+    snap_month = sorted(snap_filtered['Month'].unique(), key=month_order)[-1]
+
+snapshot = snap_filtered[snap_filtered['Month'] == snap_month].copy()
+ytd = snapshot[['Code', 'Account', 'Actual_YTD', 'Approved_Annual', 'Snapshot_Variance']].copy()
+
+if not df_calib.empty:
+    months_through = FISCAL_MONTHS[:month_order(snap_month) + 1]
+    proj_win = df_calib[df_calib['Month'].isin(months_through) & df_calib['Code'].isin(selected_codes)]
+    ytd_proj = proj_win.groupby('Code').agg(YTD_Projection=('Projection', 'sum')).reset_index()
+    proj_source = f"Calendarized (Apr–{snap_month})"
+    fallback = False
+else:
+    ytd_proj = snapshot[['Code', 'Snapshot_Variance']].copy()
+    ytd_proj['YTD_Projection'] = snapshot['Actual_YTD'].values - snapshot['Snapshot_Variance'].values
+    ytd_proj = ytd_proj[['Code', 'YTD_Projection']]
+    proj_source = "Fallback (Summary variance)"
+    fallback = True
+
+ytd = ytd.merge(ytd_proj, on='Code', how='left')
+ytd['YTD_Projection'] = ytd['YTD_Projection'].fillna(0)
+ytd['Variance'] = ytd['Actual_YTD'] - ytd['YTD_Projection']
+
+total_actual = ytd['Actual_YTD'].sum()
+total_proj = ytd['YTD_Projection'].sum()
+total_var = ytd['Variance'].sum()
+
+top_perf = ytd.nlargest(1, 'Variance').iloc[0]
+top_short = ytd.nsmallest(1, 'Variance').iloc[0]
+
+is_qe = snap_month in QUARTER_END_MONTHS
+badge = "snapshot-badge" if is_qe else "snapshot-badge-warn"
+badge_txt = f"✓ Quarter-End: {snap_month}" if is_qe else f"Latest: {snap_month}"
+
+st.markdown(f"""
+<div class="narrative-box">
+    <b>📊 Executive Summary</b>
+    <span class="{badge}">{badge_txt}</span><br><br>
+    <b>Source:</b> {snap_month} 2026 Revenue Summary &nbsp;|&nbsp; <b>Projection:</b> {proj_source}<br>
+    <b>YTD Actual:</b> ${total_actual:,.2f} &nbsp;|&nbsp; <b>YTD Projection:</b> ${total_proj:,.2f}<br>
+    <b>Net {'Overage' if total_var > 0 else 'Shortage'}:</b> ${abs(total_var):,.2f} ({(total_var/total_proj*100) if total_proj>0 else 0:.2f}%)<br><br>
+    <b>Top Driver:</b> {top_perf['Account']} (+${top_perf['Variance']:,.2f})<br>
+    <b>Main Drag:</b> {top_short['Account']} (${top_short['Variance']:,.2f})
+</div>
+""", unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns(3)
+c1.markdown(f'<div class="kpi-card"><div class="kpi-title
