@@ -132,8 +132,9 @@ def parse_all_main_data(file_payload):
 @st.cache_data
 def parse_summary_snapshot(file_payload):
     """
-    Reads ACTUAL REVENUE TO DATE (col E) and VARIANCE (col N) from Revenue Summary sheet.
-    This is the authoritative YTD source.
+    Reads ACTUAL REVENUE TO DATE (col E / idx 4) and VARIANCE (col N / idx 13)
+    from the Revenue Summary sheet. Filters by explicit code regex only,
+    NOT by "total" text, to preserve all individual tax rows.
     """
     all_snap, diagnostics = [], []
     for filename, file_bytes in file_payload:
@@ -158,6 +159,7 @@ def parse_summary_snapshot(file_payload):
 
             df = pd.read_excel(file_obj, sheet_name=summary_sheet, header=None)
 
+            # Find the header row by locating "TO DATE"
             header_row = None
             for r in range(15):
                 row_str = " ".join(str(v).upper() for v in df.iloc[r].values if pd.notna(v))
@@ -169,11 +171,15 @@ def parse_summary_snapshot(file_payload):
 
             rows = 0
             for i in range(header_row + 1, len(df)):
-                code = normalize_code(df.iloc[i, 0])
+                raw_code = df.iloc[i, 0]
                 desc = df.iloc[i, 1]
-                if not code or pd.isna(desc): continue
-                if not re.match(r'^\d{4}\s\d{3}$', code): continue
-                if "total" in str(desc).lower(): continue
+                if pd.isna(raw_code) or pd.isna(desc):
+                    continue
+                code = normalize_code(raw_code)
+                # ONLY accept explicit 4-digit + space + 3-digit codes
+                # This excludes "ACTIVITY TOTAL", "Total Personal Income Tax", etc.
+                if not re.match(r'^\d{4}\s\d{3}$', code):
+                    continue
 
                 approved = safe_number(df.iloc[i, 2])
                 actual_month = safe_number(df.iloc[i, 3]) if 3 < len(df.columns) else 0
@@ -198,14 +204,8 @@ def parse_summary_snapshot(file_payload):
 @st.cache_data
 def parse_calendarized_projections(file_payload):
     """
-    Parses the Projections file.
-    Layout (row 6 headers, data from row 7+):
-      Col 0=Code, 1=Description, 2=Total Annual
-      Month columns: D(3)=Apr, E(4)=May, F(5)=Jun, G(6)=Q1 (formula)
-                     H(7)=Jul, I(8)=Aug, J(9)=Sep, K(10)=Q2
-                     L(11)=Oct, M(12)=Nov, N(13)=Dec, O(14)=Q3
-                     P(15)=Jan, Q(16)=Feb, R(17)=Mar, S(18)=Q4, T(19)=Total
-    Returns long-form: one row per (Code, Month).
+    Reads monthly projection columns (D,E,F,H,I,J,L,M,N,P,Q,R) from Projections file.
+    Skips formula columns (G,K,O,S quarter subtotals and T annual total).
     """
     if not file_payload:
         return pd.DataFrame(), {"error": "no file"}
@@ -223,22 +223,29 @@ def parse_calendarized_projections(file_payload):
             "October": 11, "November": 12, "December": 13,
             "January": 15, "February": 16, "March": 17,
         }
+
         all_proj = []
         for i in range(7, min(55, len(df))):
-            code = normalize_code(df.iloc[i, 0])
+            raw_code = df.iloc[i, 0]
             desc = df.iloc[i, 1]
-            if not code or pd.isna(desc): continue
-            if not re.match(r'^\d{4}\s\d{3}$', code): continue
-            if "total" in str(desc).lower(): continue
+            if pd.isna(raw_code) or pd.isna(desc):
+                continue
+            code = normalize_code(raw_code)
+            if not re.match(r'^\d{4}\s\d{3}$', code):
+                continue
 
             for month, col_idx in MONTH_COL_MAP.items():
-                val = safe_number(df.iloc[i, col_idx]) if col_idx < len(df.columns) else 0
+                raw_val = df.iloc[i, col_idx] if col_idx < len(df.columns) else 0
+                # If value is a formula string like "=SUM(D9:F9)", treat as 0
+                # (those are quarter subtotals, which we don't need here anyway)
+                val = safe_number(raw_val)
                 all_proj.append({
                     "Code": code,
                     "Account": str(desc).strip(),
                     "Month": month,
                     "Projection": val,
                 })
+
         result = pd.DataFrame(all_proj)
         diagnostics["rows_parsed"] = len(result)
         return result, diagnostics
@@ -495,40 +502,48 @@ if not df_calib.empty:
     projection_source = f"Calendarized (Apr–{snapshot_month}: {len(months_through)} months)"
     fallback_used = False
 else:
+    # Fallback: back out projection from Snapshot variance
     ytd_proj = snapshot_df[['Code', 'Snapshot_Variance']].copy()
-    # Invert variance: Actual = Projection + Variance => Projection = Actual - Variance
     ytd_proj['YTD_Projection'] = snapshot_df['Actual_YTD'].values - snapshot_df['Snapshot_Variance'].values
     ytd_proj = ytd_proj[['Code', 'YTD_Projection']]
-    projection_source = "Fallback (inferred from Summary variance column)"
+    projection_source = "Fallback (from Summary variance column)"
     fallback_used = True
 
 # --- Merge and compute final variance ---
-ytd = ytd_actuals.merge(ytd_proj, on='Code', how='left').fillna({'YTD_Projection': 0})
+ytd = ytd_actuals.merge(ytd_proj, on='Code', how='left')
+ytd['YTD_Projection'] = ytd['YTD_Projection'].fillna(0)
 ytd['Variance'] = ytd['Actual_YTD'] - ytd['YTD_Projection']
 
 total_ytd = ytd['Actual_YTD'].sum()
 total_proj = ytd['YTD_Projection'].sum()
 total_var = ytd['Variance'].sum()
 
-# --- Integrity check ---
-if not fallback_used:
-    snapshot_var_sum = snapshot_df['Snapshot_Variance'].sum()
-    delta = total_var - snapshot_var_sum
-    if abs(delta) > 1.0:
-        st.markdown(f"""
-        <div class="integrity-warn">
-            ⚠️ <b>Calendarization Integrity Check:</b> Dashboard computes variance 
-            <b>${total_var:,.2f}</b> but Revenue Summary reports 
-            <b>${snapshot_var_sum:,.2f}</b> (difference: ${delta:,.2f}). 
-            This may indicate mid-year projection revisions.
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        st.markdown(f"""
-        <div class="integrity-ok">
-            ✓ <b>Integrity check passed:</b> Dashboard variance ${total_var:,.2f} matches Revenue Summary ${snapshot_var_sum:,.2f}.
-        </div>
-        """, unsafe_allow_html=True)
+# --- INTEGRITY CHECK: compare against Summary's own variance ---
+snapshot_var_sum = snapshot_df['Snapshot_Variance'].sum()
+delta_vs_summary = total_var - snapshot_var_sum
+
+# Show diagnostic
+st.caption(
+    f"🔍 **Data check:** Σ(Actual_YTD) = ${total_ytd:,.2f} | "
+    f"Summary reports ${snapshot_df['Actual_YTD'].sum():,.2f} | "
+    f"Σ(Variance) = ${total_var:,.2f} vs Summary ${snapshot_var_sum:,.2f}"
+)
+
+if not fallback_used and abs(delta_vs_summary) > 1.0:
+    st.markdown(f"""
+    <div class="integrity-warn">
+        ⚠️ <b>Calendarization discrepancy:</b> Dashboard variance 
+        <b>${total_var:,.2f}</b> vs Summary variance 
+        <b>${snapshot_var_sum:,.2f}</b> (difference: ${delta_vs_summary:,.2f}).
+        This may indicate mid-year projection revisions or a parsing issue.
+    </div>
+    """, unsafe_allow_html=True)
+elif not fallback_used:
+    st.markdown(f"""
+    <div class="integrity-ok">
+        ✓ <b>Integrity check passed:</b> Dashboard variance ${total_var:,.2f} matches Summary ${snapshot_var_sum:,.2f}.
+    </div>
+    """, unsafe_allow_html=True)
 
 # --- Top/Bottom ---
 top_perf = ytd.nlargest(1, 'Variance').iloc[0]
@@ -582,10 +597,28 @@ with tab2:
         if not df_d_f.empty:
             st.markdown("### Daily Collection Heatmap")
             heatmap = df_d_f.pivot_table(index='Month', columns='Day', values='Total', aggfunc='sum').fillna(0)
-            st.plotly_chart(px.imshow(heatmap, aspect="auto", color_continuous_scale="Blues",
-                                       labels=dict(x="Day of Month", y="Month", color="Revenue")), use_container_width=True)
+            st.plotly_chart(
+                px.imshow(heatmap, aspect="auto", color_continuous_scale="Blues",
+                          labels=dict(x="Day of Month", y="Month", color="Revenue")),
+                use_container_width=True
+            )
 
             st.markdown("### Filing Deadline Spikes")
             df_d_f = df_d_f.copy()
-            df_d_f['Deadline'] = df_d_f['Day'].apply(lambda x: 'Deadline Day' if x in [15, 21, 25, 28, 30, 31] else 'Normal Day')
-            st.plotly
+            df_d_f['Deadline'] = df_d_f['Day'].apply(
+                lambda x: 'Deadline Day' if x in [15, 21, 25, 28, 30, 31] else 'Normal Day'
+            )
+            st.plotly_chart(
+                px.box(df_d_f, x='Deadline', y='Total', color='Deadline', points="all"),
+                use_container_width=True
+            )
+
+    if not df_offices.empty:
+        dfo = df_offices[df_offices['Month'].isin(selected_months)]
+        if not dfo.empty:
+            st.markdown("### Office Performance")
+            s = dfo.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
+            st.plotly_chart(
+                px.bar(s, x='Office', y='Total', color='Total', color_continuous_scale='Blues'),
+                use_container_width=True
+            )
