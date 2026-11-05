@@ -9,7 +9,10 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
+# ==============================================================================
+# 1. PAGE CONFIG & CSS
+# ==============================================================================
+st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨", initial_sidebar_state="expanded")
 
 st.markdown("""
 <style>
@@ -24,9 +27,14 @@ st.markdown("""
     .narrative-box { background-color: #f8f9fa; border-left: 5px solid #00B4D8; padding: 15px; margin-bottom: 20px; border-radius: 5px; font-size: 16px; }
     .snapshot-badge { display: inline-block; background-color: #00B4D8; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
     .snapshot-badge-warn { display: inline-block; background-color: #F59E0B; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
+    .integrity-ok { background-color: #D4EDDA; border: 1px solid #28A745; padding: 10px; border-radius: 5px; font-size: 13px; margin-bottom: 10px; }
+    .integrity-warn { background-color: #FFF3CD; border: 1px solid #FFC107; padding: 10px; border-radius: 5px; font-size: 13px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
+# ==============================================================================
+# 2. CONSTANTS
+# ==============================================================================
 FISCAL_MONTHS = ["April", "May", "June", "July", "August", "September",
                  "October", "November", "December", "January", "February", "March"]
 MONTH_ALIASES = {
@@ -47,9 +55,11 @@ TAX_HEADS = {
     "3142 006": "Stamp Duty - Inland Revenue", "3143 010": "Telecommunication Class Licence",
     "3151 009": "Passenger Facility Fee", "3422 008": "Collection Fees - Towns & Villages",
 }
-QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2", "December": "Q3", "March": "Q4"}
-ALL_QUARTERS = ["Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"]
+QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2 (Mid-Year)", "December": "Q3", "March": "Q4 (Year-End)"}
 
+# ==============================================================================
+# 3. HELPERS
+# ==============================================================================
 def normalize_code(code):
     if pd.isna(code): return ""
     return re.sub(r'\s+', ' ', str(code).strip())
@@ -79,6 +89,11 @@ def get_quarter(month):
 def month_order(m):
     return FISCAL_MONTHS.index(m) if m in FISCAL_MONTHS else 99
 
+# ==============================================================================
+# 4. PARSERS
+# ==============================================================================
+
+# --- 4a. Monthly Actuals (from "Actual Monthly Revenue" sheet) — for TRENDS only ---
 @st.cache_data
 def parse_all_main_data(file_payload):
     all_tax, diagnostics = [], []
@@ -113,6 +128,125 @@ def parse_all_main_data(file_payload):
             diagnostics.append({"file": filename, "month": None, "rows": 0, "error": str(e)})
     return pd.DataFrame(all_tax), pd.DataFrame(diagnostics)
 
+# --- 4b. Summary Snapshot (from "Revenue Summary" sheet) — AUTHORITATIVE for YTD actuals ---
+@st.cache_data
+def parse_summary_snapshot(file_payload):
+    """
+    Reads ACTUAL REVENUE TO DATE (col E) and VARIANCE (col N) from Revenue Summary sheet.
+    This is the authoritative YTD source.
+    """
+    all_snap, diagnostics = [], []
+    for filename, file_bytes in file_payload:
+        try:
+            file_obj = _io.BytesIO(file_bytes)
+            xls = pd.ExcelFile(file_obj)
+            month = find_month_in_text(filename)
+            if not month:
+                for s in xls.sheet_names:
+                    month = find_month_in_text(s)
+                    if month: break
+            if not month:
+                diagnostics.append({"file": filename, "error": "month not detected"})
+                continue
+
+            summary_sheet = next((s for s in xls.sheet_names if "revenue summary" in s.lower()), None)
+            if not summary_sheet:
+                summary_sheet = next((s for s in xls.sheet_names if "summary" in s.lower()), None)
+            if not summary_sheet:
+                diagnostics.append({"file": filename, "error": "no summary sheet"})
+                continue
+
+            df = pd.read_excel(file_obj, sheet_name=summary_sheet, header=None)
+
+            header_row = None
+            for r in range(15):
+                row_str = " ".join(str(v).upper() for v in df.iloc[r].values if pd.notna(v))
+                if "TO DATE" in row_str:
+                    header_row = r
+                    break
+            if header_row is None:
+                header_row = 4
+
+            rows = 0
+            for i in range(header_row + 1, len(df)):
+                code = normalize_code(df.iloc[i, 0])
+                desc = df.iloc[i, 1]
+                if not code or pd.isna(desc): continue
+                if not re.match(r'^\d{4}\s\d{3}$', code): continue
+                if "total" in str(desc).lower(): continue
+
+                approved = safe_number(df.iloc[i, 2])
+                actual_month = safe_number(df.iloc[i, 3]) if 3 < len(df.columns) else 0
+                actual_ytd = safe_number(df.iloc[i, 4]) if 4 < len(df.columns) else 0
+                variance = safe_number(df.iloc[i, 13]) if 13 < len(df.columns) else 0
+
+                all_snap.append({
+                    "Month": month, "Quarter": get_quarter(month),
+                    "Code": code, "Account": str(desc).strip(),
+                    "Approved_Annual": approved,
+                    "Actual_Month": actual_month,
+                    "Actual_YTD": actual_ytd,
+                    "Snapshot_Variance": variance,
+                })
+                rows += 1
+            diagnostics.append({"file": filename, "month": month, "rows": rows})
+        except Exception as e:
+            diagnostics.append({"file": filename, "error": str(e)})
+    return pd.DataFrame(all_snap), pd.DataFrame(diagnostics)
+
+# --- 4c. Calendarized Projections ---
+@st.cache_data
+def parse_calendarized_projections(file_payload):
+    """
+    Parses the Projections file.
+    Layout (row 6 headers, data from row 7+):
+      Col 0=Code, 1=Description, 2=Total Annual
+      Month columns: D(3)=Apr, E(4)=May, F(5)=Jun, G(6)=Q1 (formula)
+                     H(7)=Jul, I(8)=Aug, J(9)=Sep, K(10)=Q2
+                     L(11)=Oct, M(12)=Nov, N(13)=Dec, O(14)=Q3
+                     P(15)=Jan, Q(16)=Feb, R(17)=Mar, S(18)=Q4, T(19)=Total
+    Returns long-form: one row per (Code, Month).
+    """
+    if not file_payload:
+        return pd.DataFrame(), {"error": "no file"}
+    filename, file_bytes = file_payload
+    diagnostics = {"file": filename, "rows_parsed": 0, "error": None}
+    try:
+        file_obj = _io.BytesIO(file_bytes)
+        xls = pd.ExcelFile(file_obj)
+        sheet = next((s for s in xls.sheet_names if "projection" in s.lower()), xls.sheet_names[0])
+        df = pd.read_excel(file_obj, sheet_name=sheet, header=None)
+
+        MONTH_COL_MAP = {
+            "April": 3, "May": 4, "June": 5,
+            "July": 7, "August": 8, "September": 9,
+            "October": 11, "November": 12, "December": 13,
+            "January": 15, "February": 16, "March": 17,
+        }
+        all_proj = []
+        for i in range(7, min(55, len(df))):
+            code = normalize_code(df.iloc[i, 0])
+            desc = df.iloc[i, 1]
+            if not code or pd.isna(desc): continue
+            if not re.match(r'^\d{4}\s\d{3}$', code): continue
+            if "total" in str(desc).lower(): continue
+
+            for month, col_idx in MONTH_COL_MAP.items():
+                val = safe_number(df.iloc[i, col_idx]) if col_idx < len(df.columns) else 0
+                all_proj.append({
+                    "Code": code,
+                    "Account": str(desc).strip(),
+                    "Month": month,
+                    "Projection": val,
+                })
+        result = pd.DataFrame(all_proj)
+        diagnostics["rows_parsed"] = len(result)
+        return result, diagnostics
+    except Exception as e:
+        diagnostics["error"] = str(e)
+        return pd.DataFrame(), diagnostics
+
+# --- 4d. Daily Collections & Offices ---
 @st.cache_data
 def parse_daily_collections(file_payload):
     all_daily, all_offices = [], []
@@ -144,6 +278,7 @@ def parse_daily_collections(file_payload):
             pass
     return pd.DataFrame(all_daily), pd.DataFrame(all_offices)
 
+# --- 4e. ISIC Deep ---
 @st.cache_data
 def parse_isic_deep(file_payload):
     all_isic = []
@@ -182,8 +317,12 @@ def parse_isic_deep(file_payload):
             pass
     return pd.DataFrame(all_isic)
 
-def select_authoritative_snapshot(df_tax, selected_months, analysis_mode):
-    filtered = df_tax[df_tax['Month'].isin(selected_months)]
+# ==============================================================================
+# 5. SNAPSHOT SELECTION
+# ==============================================================================
+def select_authoritative_snapshot(df_snap, selected_months, analysis_mode):
+    if df_snap.empty: return None, None
+    filtered = df_snap[df_snap['Month'].isin(selected_months)]
     if filtered.empty: return None, None
     if analysis_mode == "YTD (Latest Summary)":
         latest = sorted(filtered['Month'].unique(), key=month_order)[-1]
@@ -198,16 +337,18 @@ def select_authoritative_snapshot(df_tax, selected_months, analysis_mode):
         return filtered[filtered['Month'] == latest], latest
 
 # ==============================================================================
-# SIDEBAR — files only first
+# 6. SIDEBAR (files only first)
 # ==============================================================================
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
     st.title("Revenue Analysis")
     main_files = st.file_uploader("Monthly Revenue Reports (.xlsx)", type=["xlsx"], accept_multiple_files=True)
     isic_files = st.file_uploader("ISIC Variance Reports (.xlsx)", type=["xlsx"], accept_multiple_files=True)
+    calib_file = st.file_uploader("Calendarized Projections (.xlsx)", type=["xlsx"], accept_multiple_files=False,
+                                  help="Optional — upload the annual projections file to get authoritative YTD targets")
 
 # ==============================================================================
-# MAIN
+# 7. MAIN
 # ==============================================================================
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
@@ -215,40 +356,49 @@ if not main_files:
     st.info("👈 Upload your Monthly Revenue Reports in the sidebar to begin.")
     st.stop()
 
-# Parse
+# --- Parse everything ---
 main_payload = [(f.name, f.getvalue()) for f in main_files]
-df_tax, diag_main = parse_all_main_data(main_payload)
+df_tax, diag_main = parse_all_main_data(main_payload)          # monthly slices (trends)
+df_snap, diag_snap = parse_summary_snapshot(main_payload)       # YTD actuals (authoritative)
 df_daily, df_offices = parse_daily_collections(main_payload)
+
 df_isic = pd.DataFrame()
 if isic_files:
     isic_payload = [(f.name, f.getvalue()) for f in isic_files]
     df_isic = parse_isic_deep(isic_payload)
 
-# Diagnostic panel (always visible)
-with st.expander("🔍 Data Diagnostics", expanded=df_tax.empty):
-    st.dataframe(diag_main, use_container_width=True)
-    if not df_tax.empty:
-        st.write(f"**Total rows:** {len(df_tax)} | **Months:** {sorted(df_tax['Month'].unique())}")
-        st.write(f"**Quarters:** {sorted(df_tax['Quarter'].unique())}")
-        st.write(f"**Codes:** {sorted(df_tax['Code'].unique())}")
+df_calib = pd.DataFrame()
+calib_diag = {}
+if calib_file:
+    calib_payload = (calib_file.name, calib_file.getvalue())
+    df_calib, calib_diag = parse_calendarized_projections(calib_payload)
 
-if df_tax.empty:
-    st.error("Parsing produced zero rows. Check the diagnostics table above.")
+# --- Diagnostics ---
+with st.expander("🔍 Data Diagnostics", expanded=df_snap.empty):
+    st.write("**Monthly slices (trends):**", len(df_tax), "rows")
+    st.dataframe(diag_main, use_container_width=True)
+    st.write("**Summary snapshots (YTD actuals):**", len(df_snap), "rows")
+    st.dataframe(diag_snap, use_container_width=True)
+    if calib_file:
+        if calib_diag.get("error"):
+            st.error(f"Projections parse error: {calib_diag['error']}")
+        else:
+            st.success(f"✓ Projections loaded: {calib_diag['rows_parsed']} rows")
+    else:
+        st.info("ℹ️ No calendarized projections uploaded. YTD target will be inferred from the Revenue Summary's variance column.")
+
+if df_snap.empty:
+    st.error("Could not parse Summary snapshots. Verify your files contain a 'Revenue Summary' sheet.")
     st.stop()
 
-# ==============================================================================
-# BUILD SLICER OPTIONS FROM ACTUAL DATA
-# ==============================================================================
-available_months = sorted(df_tax['Month'].unique().tolist(), key=month_order)
-available_quarters = sorted(df_tax['Quarter'].unique().tolist())
-available_codes = sorted(df_tax['Code'].unique().tolist())
-
+# --- Build slicer options ---
+available_months = sorted(df_snap['Month'].unique().tolist(), key=month_order)
+available_quarters = sorted(df_snap['Quarter'].unique().tolist())
+available_codes = sorted(df_snap['Code'].unique().tolist())
 tax_display_options = [f"{c} — {TAX_HEADS.get(c, 'Unknown')}" for c in available_codes]
 display_to_code = {f"{c} — {TAX_HEADS.get(c, 'Unknown')}": c for c in available_codes}
 
-# ==============================================================================
-# SIDEBAR FILTERS (now always rendered when data exists)
-# ==============================================================================
+# --- Sidebar filters ---
 with st.sidebar:
     st.markdown("---")
     st.markdown("### 🎯 Analysis Mode")
@@ -257,10 +407,9 @@ with st.sidebar:
         ["YTD (Latest Summary)", "Quarter-End Snapshot", "Month Snapshot"],
         label_visibility="collapsed"
     )
-    
     st.markdown("---")
     st.markdown("### 🎛️ Filters")
-    
+
     # Month
     st.markdown("**Month**")
     c1, c2 = st.columns(2)
@@ -268,13 +417,9 @@ with st.sidebar:
         st.session_state["month_f"] = available_months
     if c2.button("None", key="m_none", use_container_width=True):
         st.session_state["month_f"] = []
-    selected_months = st.multiselect(
-        "Months", available_months,
-        default=available_months,
-        key="month_f",
-        label_visibility="collapsed"
-    )
-    
+    selected_months = st.multiselect("Months", available_months, default=available_months,
+                                     key="month_f", label_visibility="collapsed")
+
     # Quarter
     st.markdown("**Quarter**")
     c1, c2 = st.columns(2)
@@ -282,13 +427,9 @@ with st.sidebar:
         st.session_state["qtr_f"] = available_quarters
     if c2.button("None", key="q_none", use_container_width=True):
         st.session_state["qtr_f"] = []
-    selected_quarters = st.multiselect(
-        "Quarters", available_quarters,
-        default=available_quarters,
-        key="qtr_f",
-        label_visibility="collapsed"
-    )
-    
+    selected_quarters = st.multiselect("Quarters", available_quarters, default=available_quarters,
+                                       key="qtr_f", label_visibility="collapsed")
+
     # Tax Head
     st.markdown("**Tax Head**")
     c1, c2 = st.columns(2)
@@ -296,21 +437,15 @@ with st.sidebar:
         st.session_state["tax_f"] = tax_display_options
     if c2.button("None", key="t_none", use_container_width=True):
         st.session_state["tax_f"] = []
-    selected_taxes_display = st.multiselect(
-        "Tax Heads", tax_display_options,
-        default=tax_display_options,
-        key="tax_f",
-        label_visibility="collapsed"
-    )
-    
+    selected_taxes_display = st.multiselect("Tax Heads", tax_display_options, default=tax_display_options,
+                                            key="tax_f", label_visibility="collapsed")
+
     # Cash Basis
     st.markdown("**Cash Basis**")
     cash_basis = st.radio("Focus", ["All", "Current Only", "Arrears Only"],
                           horizontal=True, label_visibility="collapsed")
 
-# ==============================================================================
-# APPLY FILTERS & RENDER
-# ==============================================================================
+# --- Apply filters ---
 if not selected_months:
     st.warning("⚠️ No months selected. Click 'All' under Month.")
     st.stop()
@@ -323,37 +458,79 @@ if not selected_taxes_display:
 
 selected_codes = [display_to_code[d] for d in selected_taxes_display if d in display_to_code]
 
+# --- Filter monthly slices (for trends) ---
 df_f = df_tax[
     df_tax['Month'].isin(selected_months) &
     df_tax['Quarter'].isin(selected_quarters) &
     df_tax['Code'].isin(selected_codes)
 ].copy()
 
-if df_f.empty:
-    st.error("Filters produced 0 rows after all three slicers.")
-    st.write(f"Months: {selected_months}")
-    st.write(f"Quarters: {selected_quarters}")
-    st.write(f"Codes: {selected_codes}")
-    st.stop()
-
-snapshot_df, snapshot_month = select_authoritative_snapshot(df_f, selected_months, analysis_mode)
-
+# --- Snapshot for YTD ---
+snapshot_df, snapshot_month = select_authoritative_snapshot(df_snap, selected_months, analysis_mode)
 if snapshot_df is None or snapshot_df.empty:
-    st.error(f"No {analysis_mode} snapshot available. Upload the appropriate month or change mode.")
+    st.error(f"No {analysis_mode} snapshot available.")
     st.stop()
 
-months_elapsed = month_order(snapshot_month) + 1
-ytd = snapshot_df.groupby(['Code', 'Account']).agg(
-    YTD_Actual=('YTD_Actual', 'first'),
-    Approved_Annual=('Approved_Annual', 'first')
-).reset_index()
-ytd['Pro_Rata'] = ytd['Approved_Annual'] * (months_elapsed / 12)
-ytd['Variance'] = ytd['YTD_Actual'] - ytd['Pro_Rata']
+# Restrict snapshot to selected codes and quarters
+snapshot_df = snapshot_df[
+    snapshot_df['Code'].isin(selected_codes) &
+    snapshot_df['Quarter'].isin(selected_quarters)
+].copy()
 
-total_ytd = ytd['YTD_Actual'].sum()
-total_pro_rata = ytd['Pro_Rata'].sum()
-total_var = total_ytd - total_pro_rata
+if snapshot_df.empty:
+    st.error("Selected filters exclude all rows from the snapshot.")
+    st.stop()
 
+# --- YTD ACTUALS from snapshot ---
+ytd_actuals = snapshot_df[['Code', 'Account', 'Actual_YTD', 'Actual_Month', 'Approved_Annual', 'Snapshot_Variance']].copy()
+
+# --- YTD PROJECTION: calendarized (authoritative) or fallback ---
+if not df_calib.empty:
+    months_through = FISCAL_MONTHS[:month_order(snapshot_month) + 1]
+    proj_window = df_calib[
+        df_calib['Month'].isin(months_through) &
+        df_calib['Code'].isin(selected_codes)
+    ]
+    ytd_proj = proj_window.groupby('Code').agg(YTD_Projection=('Projection', 'sum')).reset_index()
+    projection_source = f"Calendarized (Apr–{snapshot_month}: {len(months_through)} months)"
+    fallback_used = False
+else:
+    ytd_proj = snapshot_df[['Code', 'Snapshot_Variance']].copy()
+    # Invert variance: Actual = Projection + Variance => Projection = Actual - Variance
+    ytd_proj['YTD_Projection'] = snapshot_df['Actual_YTD'].values - snapshot_df['Snapshot_Variance'].values
+    ytd_proj = ytd_proj[['Code', 'YTD_Projection']]
+    projection_source = "Fallback (inferred from Summary variance column)"
+    fallback_used = True
+
+# --- Merge and compute final variance ---
+ytd = ytd_actuals.merge(ytd_proj, on='Code', how='left').fillna({'YTD_Projection': 0})
+ytd['Variance'] = ytd['Actual_YTD'] - ytd['YTD_Projection']
+
+total_ytd = ytd['Actual_YTD'].sum()
+total_proj = ytd['YTD_Projection'].sum()
+total_var = ytd['Variance'].sum()
+
+# --- Integrity check ---
+if not fallback_used:
+    snapshot_var_sum = snapshot_df['Snapshot_Variance'].sum()
+    delta = total_var - snapshot_var_sum
+    if abs(delta) > 1.0:
+        st.markdown(f"""
+        <div class="integrity-warn">
+            ⚠️ <b>Calendarization Integrity Check:</b> Dashboard computes variance 
+            <b>${total_var:,.2f}</b> but Revenue Summary reports 
+            <b>${snapshot_var_sum:,.2f}</b> (difference: ${delta:,.2f}). 
+            This may indicate mid-year projection revisions.
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div class="integrity-ok">
+            ✓ <b>Integrity check passed:</b> Dashboard variance ${total_var:,.2f} matches Revenue Summary ${snapshot_var_sum:,.2f}.
+        </div>
+        """, unsafe_allow_html=True)
+
+# --- Top/Bottom ---
 top_perf = ytd.nlargest(1, 'Variance').iloc[0]
 top_short = ytd.nsmallest(1, 'Variance').iloc[0]
 
@@ -361,70 +538,54 @@ is_qe = snapshot_month in QUARTER_END_MONTHS
 badge_class = "snapshot-badge" if is_qe else "snapshot-badge-warn"
 badge_text = f"✓ Quarter-End: {snapshot_month}" if is_qe else f"Latest: {snapshot_month}"
 
+# --- Narrative Box ---
 st.markdown(f"""
 <div class="narrative-box">
     <b>📊 Executive Summary</b>
     <span class="{badge_class}">{badge_text}</span><br><br>
-    <b>Data Source:</b> <i>{snapshot_month} 2026</i> (Mode: {analysis_mode})<br>
-    <b>YTD Revenue:</b> ${total_ytd:,.0f} vs <b>Pro-Rata:</b> ${total_pro_rata:,.0f}<br>
-    <b>Net {'Overage' if total_var > 0 else 'Shortage'}:</b> ${abs(total_var):,.0f} ({(total_var/total_pro_rata*100):.1f}%)<br><br>
-    <b>Top Driver:</b> {top_perf['Account']} (+${top_perf['Variance']:,.0f})<br>
-    <b>Main Drag:</b> {top_short['Account']} (${top_short['Variance']:,.0f})
+    <b>Data Source:</b> <i>{snapshot_month} 2026 Revenue Summary</i> (Mode: {analysis_mode})<br>
+    <b>Projection Source:</b> {projection_source}<br>
+    {'<span style="color:#F59E0B">⚠️ Upload the Calendarized Projections file for authoritative targets.</span><br>' if fallback_used else ''}
+    <b>YTD Actual:</b> ${total_ytd:,.2f} | <b>YTD Projection:</b> ${total_proj:,.2f}<br>
+    <b>Net {'Overage' if total_var > 0 else 'Shortage'}:</b> ${abs(total_var):,.2f} ({(total_var/total_proj*100) if total_proj>0 else 0:.2f}%)<br><br>
+    <b>Top Driver:</b> {top_perf['Account']} (+${top_perf['Variance']:,.2f})<br>
+    <b>Main Drag:</b> {top_short['Account']} (${top_short['Variance']:,.2f})
 </div>
 """, unsafe_allow_html=True)
 
+# --- KPI Cards ---
 c1, c2, c3 = st.columns(3)
-c1.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Revenue</div><div class="kpi-value">${total_ytd:,.0f}</div><div class="kpi-delta">Source: {snapshot_month}</div></div>', unsafe_allow_html=True)
-c2.markdown(f'<div class="kpi-card"><div class="kpi-title">Pro-Rata Target</div><div class="kpi-value">${total_pro_rata:,.0f}</div><div class="kpi-delta">{months_elapsed}/12 Months</div></div>', unsafe_allow_html=True)
+c1.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Actual</div><div class="kpi-value">${total_ytd:,.0f}</div><div class="kpi-delta">Source: {snapshot_month}</div></div>', unsafe_allow_html=True)
+c2.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Projection</div><div class="kpi-value">${total_proj:,.0f}</div><div class="kpi-delta">{"Calendarized" if not fallback_used else "Derived"}</div></div>', unsafe_allow_html=True)
 c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><div class="kpi-value" style="color:{"#2E8B57" if total_var > 0 else "#DC3545"}">${total_var:,.0f}</div></div>', unsafe_allow_html=True)
 
+# --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Trends", "📅 Daily & Office", "🏭 Sector (ISIC)", "📝 Reports"])
 
 with tab1:
     st.markdown("### Tax Head Composition Over Time")
-    mc = df_f.groupby(['Month', 'Account'])['Monthly_Actual'].sum().reset_index()
-    mc['Order'] = mc['Month'].map(month_order)
-    mc = mc.sort_values('Order')
-    if not mc.empty:
+    if not df_f.empty:
+        mc = df_f.groupby(['Month', 'Account'])['Monthly_Actual'].sum().reset_index()
+        mc['Order'] = mc['Month'].map(month_order)
+        mc = mc.sort_values('Order')
         st.plotly_chart(px.area(mc, x='Month', y='Monthly_Actual', color='Account', groupnorm='fraction'), use_container_width=True)
+
+    st.markdown("### Month-over-Month Growth Rates")
+    if not df_f.empty:
+        mom = df_f.groupby(['Month', 'Account'])['Monthly_Actual'].sum().unstack(fill_value=0)
+        mom_pct = mom.pct_change().replace([float('inf'), float('-inf')], 0) * 100
+        st.dataframe(mom_pct.style.format("{:.1f}%"), use_container_width=True)
 
 with tab2:
     if not df_daily.empty:
         df_d_f = df_daily[df_daily['Month'].isin(selected_months)]
         if not df_d_f.empty:
+            st.markdown("### Daily Collection Heatmap")
             heatmap = df_d_f.pivot_table(index='Month', columns='Day', values='Total', aggfunc='sum').fillna(0)
             st.plotly_chart(px.imshow(heatmap, aspect="auto", color_continuous_scale="Blues",
-                                       labels=dict(x="Day", y="Month", color="Revenue")), use_container_width=True)
-    if not df_offices.empty:
-        dfo = df_offices[df_offices['Month'].isin(selected_months)]
-        if not dfo.empty:
-            s = dfo.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
-            st.plotly_chart(px.bar(s, x='Office', y='Total', color='Total'), use_container_width=True)
+                                       labels=dict(x="Day of Month", y="Month", color="Revenue")), use_container_width=True)
 
-with tab3:
-    if not df_isic.empty:
-        di = df_isic[df_isic['Month'].isin(selected_months)].copy()
-        if cash_basis == "Current Only": di['Amount'] = di['Current']
-        elif cash_basis == "Arrears Only": di['Amount'] = di['Arrears']
-        else: di['Amount'] = di['Total']
-        di = di[di['Amount'] > 0]
-        if not di.empty:
-            tax_pick = st.selectbox("Tax Head", di['Tax_Type'].unique())
-            drill = di[di['Tax_Type'] == tax_pick].groupby('ISIC_Sector')['Amount'].sum().nlargest(15).reset_index()
-            st.plotly_chart(px.bar(drill, x='Amount', y='ISIC_Sector', orientation='h'), use_container_width=True)
-    else:
-        st.info("Upload ISIC files to unlock sector data.")
-
-with tab4:
-    st.markdown(f"### Variance Notes — {snapshot_month} 2026")
-    if st.button(f"Generate Report for {snapshot_month}"):
-        doc = Document()
-        doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-        doc.add_heading(f'Variance Notes — {snapshot_month} 2026', 1)
-        doc.add_paragraph(f"Total YTD: ${total_ytd:,.2f} | Variance: ${total_var:,.2f}")
-        for _, r in ytd.sort_values('Code').iterrows():
-            doc.add_heading(f"{r['Code']} - {r['Account']}", level=2)
-            doc.add_paragraph(f"Actual: ${r['YTD_Actual']:,.2f} | Pro-Rata: ${r['Pro_Rata']:,.2f} | Variance: ${r['Variance']:,.2f}")
-        bio = _io.BytesIO()
-        doc.save(bio)
-        st.download_button("📥 Download", bio.getvalue(), f"Variance_Notes_{snapshot_month}.docx")
+            st.markdown("### Filing Deadline Spikes")
+            df_d_f = df_d_f.copy()
+            df_d_f['Deadline'] = df_d_f['Day'].apply(lambda x: 'Deadline Day' if x in [15, 21, 25, 28, 30, 31] else 'Normal Day')
+            st.plotly
