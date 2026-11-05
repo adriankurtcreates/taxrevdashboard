@@ -392,33 +392,105 @@ def build_variance_notes_docx(snap_month, total_actual, total_projection, total_
     bio = _io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
+# ===========================================================================
+# DATA LOADING: Read Excel files from the data/ folder committed to GitHub.
+# Falls back to manual upload if data/ is empty or missing.
+# ===========================================================================
+import os
+from pathlib import Path
+
+DATA_DIR = Path("data")
+
+def discover_files(folder, patterns):
+    """Return list of file paths in folder matching any pattern (case-insensitive)."""
+    if not folder.exists():
+        return []
+    found = []
+    for p in folder.iterdir():
+        if not p.is_file():
+            continue
+        name_lower = p.name.lower()
+        if any(pat in name_lower for pat in patterns):
+            found.append(p)
+    return found
+
+# Discover files based on filename patterns
+main_files_on_disk = []
+for p in DATA_DIR.glob("*.xlsx") if DATA_DIR.exists() else []:
+    name_lower = p.name.lower()
+    # Skip files that are clearly ISIC or projections
+    if "isic" in name_lower or "projection" in name_lower:
+        continue
+    if "monthly revenue" in name_lower or "revenue collection" in name_lower:
+        main_files_on_disk.append(p)
+
+isic_files_on_disk = [p for p in (DATA_DIR.glob("*.xlsx") if DATA_DIR.exists() else [])
+                      if "isic" in p.name.lower()]
+
+calib_file_on_disk = None
+for p in (DATA_DIR.glob("*.xlsx") if DATA_DIR.exists() else []):
+    if "projection" in p.name.lower():
+        calib_file_on_disk = p
+        break
+
+# Build payload tuples from disk files
+def path_to_payload(paths):
+    return [(p.name, p.read_bytes()) for p in paths]
+
+main_payload = path_to_payload(main_files_on_disk)
+isic_payload = path_to_payload(isic_files_on_disk)
+calib_payload = (calib_file_on_disk.name, calib_file_on_disk.read_bytes()) if calib_file_on_disk else None
+
+# --- SIDEBAR ---
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
     st.title("Revenue Analysis")
-    main_files = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True)
-    isic_files = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True)
-    calib_file = st.file_uploader("Calendarized Projections", type=["xlsx"])
+
+    # Show what was auto-loaded
+    if main_payload:
+        st.success(f"✓ Auto-loaded {len(main_payload)} monthly report(s) from `data/`")
+    else:
+        st.warning("No monthly reports found in `data/` folder. Upload below.")
+    if isic_payload:
+        st.success(f"✓ Auto-loaded {len(isic_payload)} ISIC file(s)")
+    if calib_payload:
+        st.success(f"✓ Auto-loaded projections: `{calib_payload[0]}`")
+
+    st.markdown("---")
+    with st.expander("🔄 Override with manual upload"):
+        st.caption("If you need to test a file without committing it, upload here.")
+        up_main = st.file_uploader("Monthly Revenue Reports", type=["xlsx"], accept_multiple_files=True, key="up_main")
+        up_isic = st.file_uploader("ISIC Variance Reports", type=["xlsx"], accept_multiple_files=True, key="up_isic")
+        up_calib = st.file_uploader("Calendarized Projections", type=["xlsx"], key="up_calib")
+
+    # Manual uploads take priority if present
+    if up_main:
+        main_payload = [(f.name, f.getvalue()) for f in up_main]
+        st.info(f"Using {len(main_payload)} manually uploaded report(s)")
+    if up_isic:
+        isic_payload = [(f.name, f.getvalue()) for f in up_isic]
+    if up_calib:
+        calib_payload = (up_calib.name, up_calib.getvalue())
 
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
-if not main_files:
-    st.info("👈 Upload your Monthly Revenue Reports in the sidebar to begin.")
+if not main_payload:
+    st.error("No revenue reports found. Please add .xlsx files to the `data/` folder in GitHub, or upload manually using the sidebar expander.")
+    st.info("📁 **How to add files:** In your GitHub repo, navigate to the `data/` folder, click 'Add file' → 'Upload files', drag your Excel files, and commit.")
     st.stop()
 
-main_payload = [(f.name, f.getvalue()) for f in main_files]
+# --- Parse all data ---
 df_monthly = parse_monthly_slices(main_payload)
 df_snapshot, diag_snap = parse_summary_snapshot(main_payload)
 df_daily, df_castries, df_offices = parse_daily(main_payload)
 
 df_isic = pd.DataFrame()
-if isic_files:
-    isic_payload = [(f.name, f.getvalue()) for f in isic_files]
+if isic_payload:
     df_isic = parse_isic(isic_payload)
 
 df_calib = pd.DataFrame()
 calib_diag = {}
-if calib_file:
-    calib_payload = (calib_file.name, calib_file.getvalue())
+if calib_payload:
     df_calib, calib_diag = parse_calendarized(calib_payload)
 
 with st.expander("🔍 Data Diagnostics", expanded=df_snapshot.empty):
@@ -427,14 +499,15 @@ with st.expander("🔍 Data Diagnostics", expanded=df_snapshot.empty):
         st.write(f"**Σ Actual_YTD from parser:** ${df_snapshot['Actual_YTD'].sum():,.2f}")
         st.write(f"**Months:** {sorted(df_snapshot['Month'].unique())}")
     st.dataframe(diag_snap, use_container_width=True)
-    if calib_file:
+    if calib_payload:
         if calib_diag.get("error"):
             st.error(f"Projections error: {calib_diag['error']}")
         else:
             st.success(f"✓ Projections loaded: {calib_diag['rows_parsed']} rows")
 
 if df_snapshot.empty:
-    st.error("No snapshot rows parsed."); st.stop()
+    st.error("No snapshot rows parsed. Check the diagnostics above to see what went wrong.")
+    st.stop()
 
 avail_months = sorted(df_snapshot['Month'].unique(), key=month_order)
 avail_quarters = sorted(df_snapshot['Quarter'].unique())
