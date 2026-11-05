@@ -9,10 +9,7 @@ from docx import Document
 from docx.shared import Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 
-# ==============================================================================
-# 1. PAGE CONFIG & CSS
-# ==============================================================================
-st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Saint Lucia Revenue Dashboard", layout="wide", page_icon="🇱🇨")
 
 st.markdown("""
 <style>
@@ -24,16 +21,12 @@ st.markdown("""
     .kpi-delta { font-size: 14px; font-weight: 500; }
     .delta-pos { color: #2E8B57; }
     .delta-neg { color: #DC3545; }
-    .chart-container { background-color: white; border-radius: 10px; padding: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
     .narrative-box { background-color: #f8f9fa; border-left: 5px solid #00B4D8; padding: 15px; margin-bottom: 20px; border-radius: 5px; font-size: 16px; }
     .snapshot-badge { display: inline-block; background-color: #00B4D8; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
     .snapshot-badge-warn { display: inline-block; background-color: #F59E0B; color: white; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-left: 8px; }
 </style>
 """, unsafe_allow_html=True)
 
-# ==============================================================================
-# 2. CONSTANTS
-# ==============================================================================
 FISCAL_MONTHS = ["April", "May", "June", "July", "August", "September",
                  "October", "November", "December", "January", "February", "March"]
 MONTH_ALIASES = {
@@ -44,8 +37,6 @@ MONTH_ALIASES = {
     "DEC": "December", "DECEMBER": "December", "JAN": "January", "JANUARY": "January",
     "FEB": "February", "FEBRUARY": "February", "MAR": "March", "MARCH": "March",
 }
-
-# Friendly names for tax codes
 TAX_HEADS = {
     "3111 001": "Personal Income Tax", "3111 002": "Arrears on PIT",
     "3112 001": "Corporate Income Tax", "3112 002": "Arrears on CIT",
@@ -56,16 +47,11 @@ TAX_HEADS = {
     "3142 006": "Stamp Duty - Inland Revenue", "3143 010": "Telecommunication Class Licence",
     "3151 009": "Passenger Facility Fee", "3422 008": "Collection Fees - Towns & Villages",
 }
+QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2", "December": "Q3", "March": "Q4"}
+ALL_QUARTERS = ["Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"]
 
-QUARTER_END_MONTHS = {"June": "Q1", "September": "Q2 (Mid-Year)", "December": "Q3", "March": "Q4 (Year-End)"}
-
-# ==============================================================================
-# 3. HELPERS
-# ==============================================================================
 def normalize_code(code):
-    """Normalize '3111   001' / '3111  001' / '3111 001' → '3111 001'."""
-    if pd.isna(code):
-        return ""
+    if pd.isna(code): return ""
     return re.sub(r'\s+', ' ', str(code).strip())
 
 def find_month_in_text(text):
@@ -93,9 +79,6 @@ def get_quarter(month):
 def month_order(m):
     return FISCAL_MONTHS.index(m) if m in FISCAL_MONTHS else 99
 
-# ==============================================================================
-# 4. PARSERS
-# ==============================================================================
 @st.cache_data
 def parse_all_main_data(file_payload):
     all_tax, diagnostics = [], []
@@ -113,22 +96,19 @@ def parse_all_main_data(file_payload):
                 code = df.iloc[i, 0]
                 name = df.iloc[i, 1]
                 if pd.isna(code) or pd.isna(name): continue
-                # Normalize the code: collapse all whitespace to a single space
                 code_norm = normalize_code(code)
                 if not re.match(r'^\d{4}\s\d{3}$', code_norm): continue
                 if "total" in str(name).lower(): continue
-                
                 approved = safe_number(df.iloc[i, 2])
                 monthly_actual = sum(safe_number(df.iloc[i, c]) for c in range(4, 15))
                 ytd_actual = safe_number(df.iloc[i, 15]) or monthly_actual
-                
                 all_tax.append({
                     "Month": month, "Quarter": get_quarter(month),
                     "Code": code_norm, "Account": str(name).strip(),
                     "Approved_Annual": approved, "Monthly_Actual": monthly_actual, "YTD_Actual": ytd_actual
                 })
                 rows_in_file += 1
-            diagnostics.append({"file": filename, "month": month, "rows": rows_in_file, "error": None})
+            diagnostics.append({"file": filename, "month": month, "rows": rows_in_file})
         except Exception as e:
             diagnostics.append({"file": filename, "month": None, "rows": 0, "error": str(e)})
     return pd.DataFrame(all_tax), pd.DataFrame(diagnostics)
@@ -202,9 +182,6 @@ def parse_isic_deep(file_payload):
             pass
     return pd.DataFrame(all_isic)
 
-# ==============================================================================
-# 5. SNAPSHOT PRIORITY
-# ==============================================================================
 def select_authoritative_snapshot(df_tax, selected_months, analysis_mode):
     filtered = df_tax[df_tax['Month'].isin(selected_months)]
     if filtered.empty: return None, None
@@ -221,207 +198,233 @@ def select_authoritative_snapshot(df_tax, selected_months, analysis_mode):
         return filtered[filtered['Month'] == latest], latest
 
 # ==============================================================================
-# 6. SIDEBAR
+# SIDEBAR — files only first
 # ==============================================================================
 with st.sidebar:
     st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Coat_of_arms_of_Saint_Lucia.svg/200px-Coat_of_arms_of_Saint_Lucia.svg.png", width=100)
     st.title("Revenue Analysis")
-    
     main_files = st.file_uploader("Monthly Revenue Reports (.xlsx)", type=["xlsx"], accept_multiple_files=True)
     isic_files = st.file_uploader("ISIC Variance Reports (.xlsx)", type=["xlsx"], accept_multiple_files=True)
 
 # ==============================================================================
-# 7. MAIN EXECUTION
+# MAIN
 # ==============================================================================
 st.title("🇱🇨 Revenue Intelligence Dashboard")
 
-if main_files:
-    main_payload = [(f.name, f.getvalue()) for f in main_files]
-    df_tax, diag_main = parse_all_main_data(main_payload)
-    df_daily, df_offices = parse_daily_collections(main_payload)
-    
-    df_isic = pd.DataFrame()
-    if isic_files:
-        isic_payload = [(f.name, f.getvalue()) for f in isic_files]
-        df_isic = parse_isic_deep(isic_payload)
+if not main_files:
+    st.info("👈 Upload your Monthly Revenue Reports in the sidebar to begin.")
+    st.stop()
 
-    # --- DIAGNOSTIC PANEL ---
-    with st.expander("🔍 Data Diagnostics", expanded=df_tax.empty):
-        st.dataframe(diag_main, use_container_width=True)
-        if not df_tax.empty:
-            col_a, col_b = st.columns(2)
-            with col_a:
-                st.write("**Months in data:**", sorted(df_tax['Month'].unique().tolist()))
-                st.write("**Quarters in data:**", sorted(df_tax['Quarter'].unique().tolist()))
-                st.write("**Total rows parsed:**", len(df_tax))
-            with col_b:
-                st.write("**Codes in data:**")
-                st.code("\n".join(sorted(df_tax['Code'].unique().tolist())))
+# Parse
+main_payload = [(f.name, f.getvalue()) for f in main_files]
+df_tax, diag_main = parse_all_main_data(main_payload)
+df_daily, df_offices = parse_daily_collections(main_payload)
+df_isic = pd.DataFrame()
+if isic_files:
+    isic_payload = [(f.name, f.getvalue()) for f in isic_files]
+    df_isic = parse_isic_deep(isic_payload)
 
+# Diagnostic panel (always visible)
+with st.expander("🔍 Data Diagnostics", expanded=df_tax.empty):
+    st.dataframe(diag_main, use_container_width=True)
     if not df_tax.empty:
-        # --- BUILD TAX HEAD OPTIONS FROM ACTUAL DATA ---
-        # This is the KEY FIX: options come from data, not from a hardcoded dict
-        available_codes = sorted(df_tax['Code'].unique().tolist())
-        tax_display_options = []
-        code_to_display = {}
-        for code in available_codes:
-            label = TAX_HEADS.get(code, f"Unknown ({code})")
-            display = f"{code} — {label}"
-            tax_display_options.append(display)
-            code_to_display[display] = code
-        
-        # --- SIDEBAR FILTERS ---
-        with st.sidebar:
-            st.markdown("### 🎯 Analysis Mode")
-            analysis_mode = st.radio(
-                "Which snapshot should drive YTD?",
-                ["YTD (Latest Summary)", "Quarter-End Snapshot", "Month Snapshot"]
-            )
-            st.markdown("---")
-            st.markdown("### 🎛️ Filters")
-            
-            # MONTH
-            st.markdown("**Month**")
-            mc1, mc2 = st.columns(2)
-            if mc1.button("All", key="m_all"): st.session_state["month_sel"] = FISCAL_MONTHS
-            if mc2.button("None", key="m_none"): st.session_state["month_sel"] = []
-            if "month_sel" not in st.session_state: st.session_state["month_sel"] = FISCAL_MONTHS
-            selected_months = st.multiselect("Months", FISCAL_MONTHS, key="month_sel", label_visibility="collapsed")
-            
-            # QUARTER
-            all_quarters = ["Q1 (Apr-Jun)", "Q2 (Jul-Sep)", "Q3 (Oct-Dec)", "Q4 (Jan-Mar)"]
-            st.markdown("**Quarter**")
-            qc1, qc2 = st.columns(2)
-            if qc1.button("All", key="q_all"): st.session_state["qtr_sel"] = all_quarters
-            if qc2.button("None", key="q_none"): st.session_state["qtr_sel"] = []
-            if "qtr_sel" not in st.session_state: st.session_state["qtr_sel"] = all_quarters
-            selected_quarters = st.multiselect("Quarters", all_quarters, key="qtr_sel", label_visibility="collapsed")
-            
-            # TAX HEAD (populated from data)
-            st.markdown("**Tax Head**")
-            tc1, tc2 = st.columns(2)
-            if tc1.button("All", key="t_all"): st.session_state["tax_sel"] = tax_display_options
-            if tc2.button("None", key="t_none"): st.session_state["tax_sel"] = []
-            if "tax_sel" not in st.session_state: st.session_state["tax_sel"] = tax_display_options
-            # Ensure selected values are still valid
-            st.session_state["tax_sel"] = [t for t in st.session_state["tax_sel"] if t in tax_display_options]
-            selected_taxes_display = st.multiselect("Tax Heads", tax_display_options, key="tax_sel", label_visibility="collapsed")
-            
-            # CASH BASIS
-            st.markdown("**Cash Basis**")
-            cash_basis = st.radio("Focus", ["All", "Current Only", "Arrears Only"], horizontal=True, label_visibility="collapsed")
+        st.write(f"**Total rows:** {len(df_tax)} | **Months:** {sorted(df_tax['Month'].unique())}")
+        st.write(f"**Quarters:** {sorted(df_tax['Quarter'].unique())}")
+        st.write(f"**Codes:** {sorted(df_tax['Code'].unique())}")
 
-        # --- APPLY FILTERS ---
-        if not selected_months:
-            st.warning("⚠️ No months selected.")
-        elif not selected_quarters:
-            st.warning("⚠️ No quarters selected.")
-        elif not selected_taxes_display:
-            st.warning("⚠️ No tax heads selected.")
-        else:
-            selected_codes = [code_to_display[d] for d in selected_taxes_display]
-            
-            df_f = df_tax[df_tax['Month'].isin(selected_months)].copy()
-            df_f = df_f[df_f['Quarter'].isin(selected_quarters)].copy()
-            df_f = df_f[df_f['Code'].isin(selected_codes)].copy()
-            
-            if df_f.empty:
-                st.error("❌ No rows survived the filter cascade. See diagnostics.")
-                st.write(f"Months: {selected_months}")
-                st.write(f"Quarters: {selected_quarters}")
-                st.write(f"Codes selected: {selected_codes}")
-                st.write(f"Codes in data: {available_codes}")
-            else:
-                snapshot_df, snapshot_month = select_authoritative_snapshot(df_f, selected_months, analysis_mode)
-                
-                if snapshot_df is None or snapshot_df.empty:
-                    st.error(f"No {analysis_mode} snapshot available.")
-                else:
-                    months_elapsed = month_order(snapshot_month) + 1
-                    ytd = snapshot_df.groupby(['Code', 'Account']).agg(
-                        YTD_Actual=('YTD_Actual', 'first'),
-                        Approved_Annual=('Approved_Annual', 'first')
-                    ).reset_index()
-                    ytd['Pro_Rata'] = ytd['Approved_Annual'] * (months_elapsed / 12)
-                    ytd['Variance'] = ytd['YTD_Actual'] - ytd['Pro_Rata']
-                    
-                    total_ytd = ytd['YTD_Actual'].sum()
-                    total_pro_rata = ytd['Pro_Rata'].sum()
-                    total_var = total_ytd - total_pro_rata
-                    
-                    top_perf = ytd.nlargest(1, 'Variance').iloc[0] if not ytd.empty else None
-                    top_short = ytd.nsmallest(1, 'Variance').iloc[0] if not ytd.empty else None
-                    
-                    is_qe = snapshot_month in QUARTER_END_MONTHS
-                    badge_class = "snapshot-badge" if is_qe else "snapshot-badge-warn"
-                    badge_text = f"✓ Quarter-End: {snapshot_month}" if is_qe else f"Latest: {snapshot_month}"
-                    
-                    st.markdown(f"""
-                    <div class="narrative-box">
-                        <b>📊 Executive Summary</b>
-                        <span class="{badge_class}">{badge_text}</span><br><br>
-                        <b>Data Source:</b> <i>{snapshot_month} 2026</i> (Mode: {analysis_mode})<br>
-                        <b>YTD Revenue:</b> ${total_ytd:,.0f} vs <b>Pro-Rata:</b> ${total_pro_rata:,.0f}<br>
-                        <b>Net {'Overage' if total_var > 0 else 'Shortage'}:</b> ${abs(total_var):,.0f} ({(total_var/total_pro_rata*100):.1f}%)<br><br>
-                        <b>Top Driver:</b> {top_perf['Account']} (+${top_perf['Variance']:,.0f})<br>
-                        <b>Main Drag:</b> {top_short['Account']} (${top_short['Variance']:,.0f})
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    c1, c2, c3 = st.columns(3)
-                    c1.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Revenue</div><div class="kpi-value">${total_ytd:,.0f}</div><div class="kpi-delta">Source: {snapshot_month}</div></div>', unsafe_allow_html=True)
-                    c2.markdown(f'<div class="kpi-card"><div class="kpi-title">Pro-Rata Target</div><div class="kpi-value">${total_pro_rata:,.0f}</div><div class="kpi-delta">{months_elapsed}/12 Months</div></div>', unsafe_allow_html=True)
-                    c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><div class="kpi-value" style="color:{"#2E8B57" if total_var > 0 else "#DC3545"}">${total_var:,.0f}</div></div>', unsafe_allow_html=True)
-                    
-                    tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Trends", "📅 Daily & Office", "🏭 Sector (ISIC)", "📝 Reports"])
-                    
-                    with tab1:
-                        st.markdown("### Tax Head Composition Over Time")
-                        mc = df_f.groupby(['Month', 'Account'])['Monthly_Actual'].sum().reset_index()
-                        mc['Order'] = mc['Month'].map(month_order)
-                        mc = mc.sort_values('Order')
-                        if not mc.empty:
-                            st.plotly_chart(px.area(mc, x='Month', y='Monthly_Actual', color='Account', groupnorm='fraction'), use_container_width=True)
-                    
-                    with tab2:
-                        if not df_daily.empty:
-                            df_d_f = df_daily[df_daily['Month'].isin(selected_months)]
-                            if not df_d_f.empty:
-                                heatmap = df_d_f.pivot_table(index='Month', columns='Day', values='Total', aggfunc='sum').fillna(0)
-                                st.plotly_chart(px.imshow(heatmap, aspect="auto", color_continuous_scale="Blues"), use_container_width=True)
-                        if not df_offices.empty:
-                            dfo = df_offices[df_offices['Month'].isin(selected_months)]
-                            if not dfo.empty:
-                                s = dfo.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
-                                st.plotly_chart(px.bar(s, x='Office', y='Total', color='Total'), use_container_width=True)
-                    
-                    with tab3:
-                        if not df_isic.empty:
-                            di = df_isic[df_isic['Month'].isin(selected_months)].copy()
-                            if cash_basis == "Current Only": di['Amount'] = di['Current']
-                            elif cash_basis == "Arrears Only": di['Amount'] = di['Arrears']
-                            else: di['Amount'] = di['Total']
-                            di = di[di['Amount'] > 0]
-                            if not di.empty:
-                                tax_pick = st.selectbox("Tax Head", di['Tax_Type'].unique())
-                                drill = di[di['Tax_Type'] == tax_pick].groupby('ISIC_Sector')['Amount'].sum().nlargest(15).reset_index()
-                                st.plotly_chart(px.bar(drill, x='Amount', y='ISIC_Sector', orientation='h'), use_container_width=True)
-                        else:
-                            st.info("Upload ISIC files to unlock sector data.")
-                    
-                    with tab4:
-                        st.markdown(f"### Variance Notes — {snapshot_month} 2026")
-                        if st.button(f"Generate Report for {snapshot_month}"):
-                            doc = Document()
-                            doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
-                            doc.add_heading(f'Variance Notes — {snapshot_month} 2026', 1)
-                            doc.add_paragraph(f"Total YTD: ${total_ytd:,.2f} | Variance: ${total_var:,.2f}")
-                            for _, r in ytd.sort_values('Code').iterrows():
-                                doc.add_heading(f"{r['Code']} - {r['Account']}", level=2)
-                                doc.add_paragraph(f"Actual: ${r['YTD_Actual']:,.2f} | Pro-Rata: ${r['Pro_Rata']:,.2f} | Variance: ${r['Variance']:,.2f}")
-                            bio = _io.BytesIO()
-                            doc.save(bio)
-                            st.download_button("📥 Download", bio.getvalue(), f"Variance_Notes_{snapshot_month}.docx")
+if df_tax.empty:
+    st.error("Parsing produced zero rows. Check the diagnostics table above.")
+    st.stop()
 
-elif not main_files:
-    st.info("👈 Upload your Monthly Revenue Reports and ISIC files in the sidebar to begin.")
+# ==============================================================================
+# BUILD SLICER OPTIONS FROM ACTUAL DATA
+# ==============================================================================
+available_months = sorted(df_tax['Month'].unique().tolist(), key=month_order)
+available_quarters = sorted(df_tax['Quarter'].unique().tolist())
+available_codes = sorted(df_tax['Code'].unique().tolist())
+
+tax_display_options = [f"{c} — {TAX_HEADS.get(c, 'Unknown')}" for c in available_codes]
+display_to_code = {f"{c} — {TAX_HEADS.get(c, 'Unknown')}": c for c in available_codes}
+
+# ==============================================================================
+# SIDEBAR FILTERS (now always rendered when data exists)
+# ==============================================================================
+with st.sidebar:
+    st.markdown("---")
+    st.markdown("### 🎯 Analysis Mode")
+    analysis_mode = st.radio(
+        "Snapshot driver",
+        ["YTD (Latest Summary)", "Quarter-End Snapshot", "Month Snapshot"],
+        label_visibility="collapsed"
+    )
+    
+    st.markdown("---")
+    st.markdown("### 🎛️ Filters")
+    
+    # Month
+    st.markdown("**Month**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="m_all", use_container_width=True):
+        st.session_state["month_f"] = available_months
+    if c2.button("None", key="m_none", use_container_width=True):
+        st.session_state["month_f"] = []
+    selected_months = st.multiselect(
+        "Months", available_months,
+        default=available_months,
+        key="month_f",
+        label_visibility="collapsed"
+    )
+    
+    # Quarter
+    st.markdown("**Quarter**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="q_all", use_container_width=True):
+        st.session_state["qtr_f"] = available_quarters
+    if c2.button("None", key="q_none", use_container_width=True):
+        st.session_state["qtr_f"] = []
+    selected_quarters = st.multiselect(
+        "Quarters", available_quarters,
+        default=available_quarters,
+        key="qtr_f",
+        label_visibility="collapsed"
+    )
+    
+    # Tax Head
+    st.markdown("**Tax Head**")
+    c1, c2 = st.columns(2)
+    if c1.button("All", key="t_all", use_container_width=True):
+        st.session_state["tax_f"] = tax_display_options
+    if c2.button("None", key="t_none", use_container_width=True):
+        st.session_state["tax_f"] = []
+    selected_taxes_display = st.multiselect(
+        "Tax Heads", tax_display_options,
+        default=tax_display_options,
+        key="tax_f",
+        label_visibility="collapsed"
+    )
+    
+    # Cash Basis
+    st.markdown("**Cash Basis**")
+    cash_basis = st.radio("Focus", ["All", "Current Only", "Arrears Only"],
+                          horizontal=True, label_visibility="collapsed")
+
+# ==============================================================================
+# APPLY FILTERS & RENDER
+# ==============================================================================
+if not selected_months:
+    st.warning("⚠️ No months selected. Click 'All' under Month.")
+    st.stop()
+if not selected_quarters:
+    st.warning("⚠️ No quarters selected. Click 'All' under Quarter.")
+    st.stop()
+if not selected_taxes_display:
+    st.warning("⚠️ No tax heads selected. Click 'All' under Tax Head.")
+    st.stop()
+
+selected_codes = [display_to_code[d] for d in selected_taxes_display if d in display_to_code]
+
+df_f = df_tax[
+    df_tax['Month'].isin(selected_months) &
+    df_tax['Quarter'].isin(selected_quarters) &
+    df_tax['Code'].isin(selected_codes)
+].copy()
+
+if df_f.empty:
+    st.error("Filters produced 0 rows after all three slicers.")
+    st.write(f"Months: {selected_months}")
+    st.write(f"Quarters: {selected_quarters}")
+    st.write(f"Codes: {selected_codes}")
+    st.stop()
+
+snapshot_df, snapshot_month = select_authoritative_snapshot(df_f, selected_months, analysis_mode)
+
+if snapshot_df is None or snapshot_df.empty:
+    st.error(f"No {analysis_mode} snapshot available. Upload the appropriate month or change mode.")
+    st.stop()
+
+months_elapsed = month_order(snapshot_month) + 1
+ytd = snapshot_df.groupby(['Code', 'Account']).agg(
+    YTD_Actual=('YTD_Actual', 'first'),
+    Approved_Annual=('Approved_Annual', 'first')
+).reset_index()
+ytd['Pro_Rata'] = ytd['Approved_Annual'] * (months_elapsed / 12)
+ytd['Variance'] = ytd['YTD_Actual'] - ytd['Pro_Rata']
+
+total_ytd = ytd['YTD_Actual'].sum()
+total_pro_rata = ytd['Pro_Rata'].sum()
+total_var = total_ytd - total_pro_rata
+
+top_perf = ytd.nlargest(1, 'Variance').iloc[0]
+top_short = ytd.nsmallest(1, 'Variance').iloc[0]
+
+is_qe = snapshot_month in QUARTER_END_MONTHS
+badge_class = "snapshot-badge" if is_qe else "snapshot-badge-warn"
+badge_text = f"✓ Quarter-End: {snapshot_month}" if is_qe else f"Latest: {snapshot_month}"
+
+st.markdown(f"""
+<div class="narrative-box">
+    <b>📊 Executive Summary</b>
+    <span class="{badge_class}">{badge_text}</span><br><br>
+    <b>Data Source:</b> <i>{snapshot_month} 2026</i> (Mode: {analysis_mode})<br>
+    <b>YTD Revenue:</b> ${total_ytd:,.0f} vs <b>Pro-Rata:</b> ${total_pro_rata:,.0f}<br>
+    <b>Net {'Overage' if total_var > 0 else 'Shortage'}:</b> ${abs(total_var):,.0f} ({(total_var/total_pro_rata*100):.1f}%)<br><br>
+    <b>Top Driver:</b> {top_perf['Account']} (+${top_perf['Variance']:,.0f})<br>
+    <b>Main Drag:</b> {top_short['Account']} (${top_short['Variance']:,.0f})
+</div>
+""", unsafe_allow_html=True)
+
+c1, c2, c3 = st.columns(3)
+c1.markdown(f'<div class="kpi-card"><div class="kpi-title">YTD Revenue</div><div class="kpi-value">${total_ytd:,.0f}</div><div class="kpi-delta">Source: {snapshot_month}</div></div>', unsafe_allow_html=True)
+c2.markdown(f'<div class="kpi-card"><div class="kpi-title">Pro-Rata Target</div><div class="kpi-value">${total_pro_rata:,.0f}</div><div class="kpi-delta">{months_elapsed}/12 Months</div></div>', unsafe_allow_html=True)
+c3.markdown(f'<div class="kpi-card"><div class="kpi-title">Net Variance</div><div class="kpi-value" style="color:{"#2E8B57" if total_var > 0 else "#DC3545"}">${total_var:,.0f}</div></div>', unsafe_allow_html=True)
+
+tab1, tab2, tab3, tab4 = st.tabs(["📈 Macro Trends", "📅 Daily & Office", "🏭 Sector (ISIC)", "📝 Reports"])
+
+with tab1:
+    st.markdown("### Tax Head Composition Over Time")
+    mc = df_f.groupby(['Month', 'Account'])['Monthly_Actual'].sum().reset_index()
+    mc['Order'] = mc['Month'].map(month_order)
+    mc = mc.sort_values('Order')
+    if not mc.empty:
+        st.plotly_chart(px.area(mc, x='Month', y='Monthly_Actual', color='Account', groupnorm='fraction'), use_container_width=True)
+
+with tab2:
+    if not df_daily.empty:
+        df_d_f = df_daily[df_daily['Month'].isin(selected_months)]
+        if not df_d_f.empty:
+            heatmap = df_d_f.pivot_table(index='Month', columns='Day', values='Total', aggfunc='sum').fillna(0)
+            st.plotly_chart(px.imshow(heatmap, aspect="auto", color_continuous_scale="Blues",
+                                       labels=dict(x="Day", y="Month", color="Revenue")), use_container_width=True)
+    if not df_offices.empty:
+        dfo = df_offices[df_offices['Month'].isin(selected_months)]
+        if not dfo.empty:
+            s = dfo.groupby('Office')['Total'].sum().reset_index().sort_values('Total', ascending=False)
+            st.plotly_chart(px.bar(s, x='Office', y='Total', color='Total'), use_container_width=True)
+
+with tab3:
+    if not df_isic.empty:
+        di = df_isic[df_isic['Month'].isin(selected_months)].copy()
+        if cash_basis == "Current Only": di['Amount'] = di['Current']
+        elif cash_basis == "Arrears Only": di['Amount'] = di['Arrears']
+        else: di['Amount'] = di['Total']
+        di = di[di['Amount'] > 0]
+        if not di.empty:
+            tax_pick = st.selectbox("Tax Head", di['Tax_Type'].unique())
+            drill = di[di['Tax_Type'] == tax_pick].groupby('ISIC_Sector')['Amount'].sum().nlargest(15).reset_index()
+            st.plotly_chart(px.bar(drill, x='Amount', y='ISIC_Sector', orientation='h'), use_container_width=True)
+    else:
+        st.info("Upload ISIC files to unlock sector data.")
+
+with tab4:
+    st.markdown(f"### Variance Notes — {snapshot_month} 2026")
+    if st.button(f"Generate Report for {snapshot_month}"):
+        doc = Document()
+        doc.add_heading('SAINT LUCIA - DEPARTMENT OF FINANCE', 0).alignment = WD_ALIGN_PARAGRAPH.CENTER
+        doc.add_heading(f'Variance Notes — {snapshot_month} 2026', 1)
+        doc.add_paragraph(f"Total YTD: ${total_ytd:,.2f} | Variance: ${total_var:,.2f}")
+        for _, r in ytd.sort_values('Code').iterrows():
+            doc.add_heading(f"{r['Code']} - {r['Account']}", level=2)
+            doc.add_paragraph(f"Actual: ${r['YTD_Actual']:,.2f} | Pro-Rata: ${r['Pro_Rata']:,.2f} | Variance: ${r['Variance']:,.2f}")
+        bio = _io.BytesIO()
+        doc.save(bio)
+        st.download_button("📥 Download", bio.getvalue(), f"Variance_Notes_{snapshot_month}.docx")
